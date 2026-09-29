@@ -1,0 +1,19 @@
+[Unit]
+Description=Quality control API
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=qc
+Group=qc
+EnvironmentFile=/etc/quality-control.env
+WorkingDirectory=/var/lib/quality-control
+ExecStart=/usr/local/bin/quality-control
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+/bin/
+/data/
+.env
+*.exe
+*.test
+.DS_Store
+
+# Xcode user data
+**/xcuserdata/
+**/*.xcuserstate
+DerivedData/
