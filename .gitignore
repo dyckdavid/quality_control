@@ -9,3 +9,9 @@
 **/xcuserdata/
 **/*.xcuserstate
 DerivedData/
+
+# Rust desktop client
+desktop/target/
+desktop/screenshots/
+desktop/Cargo.lock.bak
+

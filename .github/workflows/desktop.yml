@@ -1,0 +1,144 @@
+name: Desktop
+
+on:
+  push:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop.yml"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop.yml"
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+
+jobs:
+  build-linux:
+    name: Build & test (ubuntu-latest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: qc
+          POSTGRES_PASSWORD: qc-ci-password
+          POSTGRES_DB: quality_control
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U qc -d quality_control"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      QC_HTTP_ADDR: 127.0.0.1:8080
+      QC_DATABASE_URL: postgres://qc:qc-ci-password@127.0.0.1:5432/quality_control?sslmode=disable
+      QC_JWT_SECRET: ci-jwt-secret-at-least-thirty-two-chars
+      QC_ADMIN_USERNAME: admin
+      QC_ADMIN_PASSWORD: change-me-now
+      QC_DATA_DIR: ./data
+      QC_API_BASE_URL: http://127.0.0.1:8080
+      QC_API_USERNAME: admin
+      QC_API_PASSWORD: change-me-now
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux GUI / build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libxkbcommon-x11-0 libssl-dev libgtk-3-dev xvfb
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: Build API
+        run: |
+          mkdir -p data bin
+          go build -o bin/quality-control ./cmd/quality-control
+
+      - name: Start API
+        run: |
+          ./bin/quality-control &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8080/readyz >/dev/null; then
+              echo "API ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "API failed to become ready"
+          exit 1
+
+      - name: Desktop unit tests
+        working-directory: desktop
+        run: cargo test --lib
+
+      - name: Desktop integration tests
+        working-directory: desktop
+        run: cargo test --tests -- --nocapture
+
+      - name: Release build
+        working-directory: desktop
+        run: cargo build --release
+
+      - name: Screenshots under Xvfb
+        working-directory: desktop
+        run: |
+          mkdir -p screenshots
+          xvfb-run -a ./target/release/qc-desktop \
+            --server http://127.0.0.1:8080 \
+            --user admin \
+            --password change-me-now \
+            --screenshot-dir ./screenshots
+          ls -la screenshots
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-screenshots-linux
+          path: desktop/screenshots/*.png
+          if-no-files-found: warn
+
+  build-macos:
+    name: Build & test (macos-latest)
+    runs-on: macos-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: Desktop unit tests
+        working-directory: desktop
+        run: cargo test --lib
+
+      - name: Release build
+        working-directory: desktop
+        run: cargo build --release
