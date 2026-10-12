@@ -49,6 +49,7 @@ struct ToolsView: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .qcListChrome()
         .navigationTitle("Tester tools")
         .alert("Copied", isPresented: $copied) {
             Button("OK", role: .cancel) {}

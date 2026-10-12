@@ -74,13 +74,24 @@ struct PlansView: View {
                 List(plans) { plan in
                     NavigationLink(value: plan.id) {
                         VStack(alignment: .leading) {
-                            Text("\(plan.name) · \(plan.revision)").font(.headline)
-                            Text(displayName(plan.samplingType)).font(.subheadline).foregroundStyle(.secondary)
+                            Text("\(plan.name) · \(plan.revision)").font(QCTheme.headlineFont)
+                            Text(displayName(plan.samplingType)).font(.subheadline).foregroundStyle(QCTheme.mutedInk)
                         }
                         StatusBadge(text: plan.status)
                     }
+                    .accessibilityLabel("Plan \(plan.name) revision \(plan.revision), \(displayName(plan.status))")
                 }
-            } else if data.loading { ProgressView() }
+                .qcListChrome()
+                .overlay {
+                    if plans.isEmpty {
+                        EmptyStateView(title: "No plans", systemImage: "list.bullet.rectangle", description: "Create an inspection plan for a product.")
+                    }
+                }
+            } else if data.loading {
+                LoadingStateView(message: "Loading plans")
+            } else {
+                ErrorStateView(title: "Could not load plans", message: data.error ?? "Pull to refresh.", retry: { Task { await reload() } })
+            }
         }
         .navigationTitle("Plans")
         .navigationDestination(for: UUID.self) { PlanDetailView(id: $0) }
@@ -580,15 +591,23 @@ private struct CatalogList<Item: Identifiable, Row: View>: View {
         Group {
             if let rows {
                 List(rows) { item in row(item) }
+                    .qcListChrome()
                     .overlay {
                         if rows.isEmpty {
-                            ContentUnavailableView(empty, systemImage: "tray", description: Text("Pull to refresh after you add one."))
+                            EmptyStateView(
+                                title: empty,
+                                systemImage: "tray",
+                                description: "Pull to refresh after you add one."
+                            )
                         }
                     }
             } else if loading {
-                ProgressView("Loading \(title.lowercased())")
+                LoadingStateView(message: "Loading \(title.lowercased())")
             } else {
-                ContentUnavailableView("Could not load \(title.lowercased())", systemImage: "wifi.exclamationmark", description: Text(problem ?? "Pull to refresh."))
+                ErrorStateView(
+                    title: "Could not load \(title.lowercased())",
+                    message: problem ?? "Pull to refresh."
+                )
             }
         }
         .navigationTitle(title)

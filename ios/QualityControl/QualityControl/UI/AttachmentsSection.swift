@@ -29,9 +29,10 @@ struct AttachmentsSection: View {
                         Text(file.fileName)
                         Text(file.contentType)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(QCTheme.mutedInk)
                     }
                 }
+                .accessibilityLabel("Attachment \(file.fileName)")
                 .swipeActions {
                     if canDelete {
                         Button("Delete", role: .destructive) {
