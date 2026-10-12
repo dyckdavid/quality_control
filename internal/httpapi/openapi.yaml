@@ -1,0 +1,456 @@
+openapi: 3.0.3
+info:
+  title: Quality Control API
+  version: "1.1.0"
+  description: |
+    Plant quality-control HTTP API. Existing core routes are unchanged; this
+    document also covers additive analytics, reports, checklists, webhooks,
+    metrics, search, request audit, and demo seed endpoints.
+servers:
+  - url: http://127.0.0.1:8080
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+    Page:
+      type: object
+      properties:
+        limit: { type: integer }
+        offset: { type: integer }
+        total: { type: integer }
+paths:
+  /healthz:
+    get:
+      security: []
+      summary: Liveness
+      responses:
+        "200": { description: OK }
+  /readyz:
+    get:
+      security: []
+      summary: Readiness (database ping)
+      responses:
+        "200": { description: Ready }
+        "503": { description: Database unavailable }
+  /metrics:
+    get:
+      security: []
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus text exposition
+          content:
+            text/plain: {}
+  /api/v1/version:
+    get:
+      security: []
+      summary: Build version
+      responses:
+        "200": { description: Version payload }
+  /api/v1/openapi.yaml:
+    get:
+      security: []
+      summary: OpenAPI 3 document (YAML)
+      responses:
+        "200":
+          description: OpenAPI document
+          content:
+            application/yaml: {}
+  /api/v1/openapi.json:
+    get:
+      security: []
+      summary: OpenAPI document (YAML body, tooling alias)
+      responses:
+        "200": { description: OpenAPI document }
+  /api/v1/auth/login:
+    post:
+      security: []
+      summary: Sign in
+      responses:
+        "200": { description: Session tokens }
+  /api/v1/dashboard:
+    get:
+      summary: Plant snapshot counts
+      responses:
+        "200": { description: Dashboard }
+  /api/v1/metrics:
+    get:
+      summary: JSON process metrics
+      responses:
+        "200": { description: Metrics snapshot }
+  /api/v1/search:
+    get:
+      summary: Unified search across lots, inspections, NCRs, CAPAs
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 25, maximum: 100 }
+      responses:
+        "200": { description: Search hits }
+  /api/v1/request-audit:
+    get:
+      summary: HTTP access log (additive; separate from mutation audit)
+      parameters:
+        - in: query
+          name: actor_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: method
+          schema: { type: string }
+        - in: query
+          name: path
+          schema: { type: string }
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+        - in: query
+          name: limit
+          schema: { type: integer }
+        - in: query
+          name: offset
+          schema: { type: integer }
+      responses:
+        "200": { description: Paged request audit }
+  /api/v1/stats/defect-rates:
+    get:
+      summary: Defect and fail rates by product, site, or inspector
+      parameters:
+        - in: query
+          name: group_by
+          schema: { type: string, enum: [product, site, inspector], default: product }
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+        - in: query
+          name: product_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: site_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: inspector_id
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Rate rows }
+  /api/v1/stats/ncr-aging:
+    get:
+      summary: Open nonconformance aging buckets and items
+      responses:
+        "200": { description: Aging report }
+  /api/v1/stats/capa-aging:
+    get:
+      summary: Open CAPA aging buckets and items
+      responses:
+        "200": { description: Aging report }
+  /api/v1/stats/trends:
+    get:
+      summary: Daily inspection, NCR, and defect trends
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+        - in: query
+          name: product_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: site_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: inspector_id
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Trend series }
+  /api/v1/reports/inspections.csv:
+    get:
+      summary: Export inspections as CSV
+      responses:
+        "200":
+          description: CSV download
+          content:
+            text/csv: {}
+  /api/v1/reports/nonconformances.csv:
+    get:
+      summary: Export NCRs as CSV
+      responses:
+        "200":
+          description: CSV download
+          content:
+            text/csv: {}
+  /api/v1/reports/corrective-actions.csv:
+    get:
+      summary: Export CAPAs as CSV
+      responses:
+        "200":
+          description: CSV download
+          content:
+            text/csv: {}
+  /api/v1/reports/inspections.pdf:
+    get:
+      summary: Export inspections as a simple PDF
+      responses:
+        "200":
+          description: PDF download
+          content:
+            application/pdf: {}
+  /api/v1/reports/summary.pdf:
+    get:
+      summary: Plant quality summary PDF
+      responses:
+        "200":
+          description: PDF download
+          content:
+            application/pdf: {}
+  /api/v1/checklists:
+    get:
+      summary: List checklist templates
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: product_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: active
+          schema: { type: boolean }
+      responses:
+        "200": { description: Paged checklists }
+    post:
+      summary: Create checklist template
+      responses:
+        "201": { description: Created }
+  /api/v1/checklists/{id}:
+    get:
+      summary: Get checklist with items
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Checklist detail }
+    patch:
+      summary: Update checklist header
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Updated }
+  /api/v1/checklists/{id}/items:
+    post:
+      summary: Add checklist item
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "201": { description: Created }
+  /api/v1/checklist-items/{id}:
+    patch:
+      summary: Update checklist item
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Updated }
+    delete:
+      summary: Delete checklist item
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+  /api/v1/inspections/{id}/checklists:
+    get:
+      summary: List checklist runs for an inspection
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Runs }
+    post:
+      summary: Start a checklist run on an inspection
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "201": { description: Started }
+  /api/v1/checklist-runs/{id}:
+    get:
+      summary: Get checklist run with answers
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Run detail }
+  /api/v1/checklist-runs/{id}/items/{itemID}:
+    post:
+      summary: Answer a checklist run item
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: path
+          name: itemID
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Answered item }
+  /api/v1/checklist-runs/{id}/complete:
+    post:
+      summary: Complete a checklist run
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Completed run }
+  /api/v1/webhooks/events:
+    get:
+      summary: List supported webhook event types
+      responses:
+        "200": { description: Event names }
+  /api/v1/webhooks:
+    get:
+      summary: List webhook subscriptions
+      responses:
+        "200": { description: Paged webhooks }
+    post:
+      summary: Create webhook subscription
+      responses:
+        "201": { description: Created }
+  /api/v1/webhooks/{id}:
+    get:
+      summary: Get webhook
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Webhook }
+    patch:
+      summary: Update webhook
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200": { description: Updated }
+  /api/v1/webhook-deliveries:
+    get:
+      summary: List webhook delivery attempts
+      parameters:
+        - in: query
+          name: webhook_id
+          schema: { type: string, format: uuid }
+        - in: query
+          name: status
+          schema: { type: string }
+      responses:
+        "200": { description: Paged deliveries }
+  /api/v1/notifications:
+    get:
+      summary: List notification outbox
+      responses:
+        "200": { description: Paged notifications }
+  /api/v1/notifications/email:
+    post:
+      summary: Queue an email notification (stored for external delivery)
+      responses:
+        "201": { description: Queued }
+  /api/v1/admin/seed-demo:
+    post:
+      summary: Seed additive demo plant data
+      responses:
+        "201": { description: Seeded dataset summary }
+  /api/v1/sites:
+    get:
+      summary: List sites
+      responses:
+        "200": { description: Paged sites }
+    post:
+      summary: Create site
+      responses:
+        "201": { description: Created }
+  /api/v1/products:
+    get:
+      summary: List products
+      responses:
+        "200": { description: Paged products }
+  /api/v1/lots:
+    get:
+      summary: List lots
+      responses:
+        "200": { description: Paged lots }
+  /api/v1/inspections:
+    get:
+      summary: List inspections
+      responses:
+        "200": { description: Paged inspections }
+  /api/v1/nonconformances:
+    get:
+      summary: List nonconformances
+      responses:
+        "200": { description: Paged NCRs }
+  /api/v1/corrective-actions:
+    get:
+      summary: List corrective actions
+      responses:
+        "200": { description: Paged CAPAs }
+  /api/v1/attachments:
+    get:
+      summary: List attachments for an entity
+      responses:
+        "200": { description: Attachments }
+    post:
+      summary: Upload attachment
+      responses:
+        "201": { description: Created }
+  /api/v1/audit:
+    get:
+      summary: Mutation audit log
+      responses:
+        "200": { description: Paged audit entries }
