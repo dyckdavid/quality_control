@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use clap::Parser;
 use qc_desktop::app::{LaunchOptions, QcApp};
 use qc_desktop::settings::AppSettings;
@@ -37,11 +39,16 @@ fn main() -> eframe::Result<()> {
         auto_login_pass: args.password,
     };
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1440.0, 900.0])
+        .with_min_inner_size([960.0, 600.0])
+        .with_fullsize_content_view(false)
+        .with_title("Quality Control");
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")) {
+        viewport = viewport.with_icon(icon);
+    }
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([900.0, 600.0])
-            .with_title("Quality Control"),
+        viewport,
         ..Default::default()
     };
 

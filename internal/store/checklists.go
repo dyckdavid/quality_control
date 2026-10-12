@@ -439,8 +439,12 @@ func (s *Store) AnswerChecklistRunItem(ctx context.Context, actor domain.Actor, 
 		UPDATE checklist_run_items
 		SET result = $1, numeric_value = $2, notes = $3, answered_by = $4, answered_at = now()
 		WHERE id = $5 AND run_id = $6
+		  AND EXISTS (SELECT 1 FROM checklist_runs WHERE id = $6 AND status = 'in_progress')
 		RETURNING `+checklistRunItemCols, in.Result, in.NumericValue, in.Notes, answered, itemID, runID))
 	if err != nil {
+		if isNoRows(err) {
+			return domain.ChecklistRunItem{}, invalid("checklist run is not in progress")
+		}
 		return domain.ChecklistRunItem{}, mapErr(err)
 	}
 	return out, s.writeAudit(ctx, s.pool, actor, "checklist_run.answer", "checklist_run_item", out.ID, "Answered checklist item", target, out)
@@ -466,8 +470,13 @@ func (s *Store) CompleteChecklistRun(ctx context.Context, actor domain.Actor, ru
 	}
 	run, err := scanChecklistRun(s.pool.QueryRow(ctx, `
 		UPDATE checklist_runs SET status = 'completed', completed_by = $1, completed_at = now()
-		WHERE id = $2 RETURNING `+checklistRunCols, completed, runID))
+		WHERE id = $2 AND status = 'in_progress'
+		  AND NOT EXISTS (SELECT 1 FROM checklist_run_items WHERE run_id = $2 AND required AND answered_at IS NULL)
+		RETURNING `+checklistRunCols, completed, runID))
 	if err != nil {
+		if isNoRows(err) {
+			return domain.ChecklistRunDetail{}, invalid("checklist run changed; reload it and try again")
+		}
 		return domain.ChecklistRunDetail{}, mapErr(err)
 	}
 	out := domain.ChecklistRunDetail{ChecklistRun: run, Items: detail.Items}

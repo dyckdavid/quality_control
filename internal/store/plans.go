@@ -123,7 +123,7 @@ func (s *Store) UpdatePlan(ctx context.Context, actor domain.Actor, id uuid.UUID
 		if err != nil {
 			return mapErr(err)
 		}
-		if cur.Status != domain.PlanDraft {
+		if cur.Status != domain.PlanDraft && !actor.IsAdmin() {
 			return invalid("only a draft plan can be edited")
 		}
 		if in.ClearSample && in.SampleSize != nil {
@@ -220,7 +220,7 @@ func (s *Store) UpdateCharacteristic(ctx context.Context, actor domain.Actor, id
 		if err != nil {
 			return mapErr(err)
 		}
-		if plan.Status != domain.PlanDraft {
+		if plan.Status != domain.PlanDraft && !actor.IsAdmin() {
 			return invalid("characteristics can only be edited on a draft plan")
 		}
 		next := domain.NewCharacteristic{
@@ -238,6 +238,9 @@ func (s *Store) UpdateCharacteristic(ctx context.Context, actor domain.Actor, id
 			next.Name = *in.Name
 		}
 		if in.CharacteristicType != nil {
+			if plan.Status != domain.PlanDraft && *in.CharacteristicType != cur.CharacteristicType {
+				return invalid("a check on an active plan can't switch between measure and pass or fail; make a new revision")
+			}
 			next.CharacteristicType = *in.CharacteristicType
 		}
 		if in.Method != nil {

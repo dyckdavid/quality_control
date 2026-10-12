@@ -3,6 +3,7 @@ use super::models::*;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::io::Read;
 use uuid::Uuid;
 
 /// HTTP client for the quality-control JSON API.
@@ -69,6 +70,93 @@ impl ApiClient {
         let session: TokenResponse = self.post_data("/api/v1/auth/login", &body)?;
         self.access_token = Some(session.access_token.clone());
         Ok(session)
+    }
+
+    pub fn refresh(&self, refresh_token: &str) -> Result<TokenResponse, ApiError> {
+        let body = RefreshRequest {
+            refresh_token: refresh_token.to_string(),
+        };
+        self.post_data("/api/v1/auth/refresh", &body)
+    }
+
+    pub fn logout(&self, refresh_token: &str) -> Result<(), ApiError> {
+        let body = RefreshRequest {
+            refresh_token: refresh_token.to_string(),
+        };
+        let _: serde_json::Value = self.request_json("POST", "/api/v1/auth/logout", Some(&body), &HashMap::new())?;
+        Ok(())
+    }
+
+    pub fn get_plan(&self, id: Uuid) -> Result<PlanDetail, ApiError> {
+        self.get_data(&format!("/api/v1/plans/{id}"))
+    }
+
+    pub fn get_lot(&self, id: Uuid) -> Result<Lot, ApiError> {
+        self.get_data(&format!("/api/v1/lots/{id}"))
+    }
+
+    pub fn set_lot_status(&self, id: Uuid, status: &str) -> Result<Lot, ApiError> {
+        self.post_data(
+            &format!("/api/v1/lots/{id}/status"),
+            &serde_json::json!({ "status": status }),
+        )
+    }
+
+    pub fn list_defect_codes(&self) -> Result<Vec<DefectCode>, ApiError> {
+        let mut q = HashMap::new();
+        q.insert("limit", "200".to_string());
+        q.insert("offset", "0".to_string());
+        self.get_page("/api/v1/defect-codes", &q).map(|(rows, _)| rows)
+    }
+
+    pub fn list_gauges(&self) -> Result<Vec<Gauge>, ApiError> {
+        let mut q = HashMap::new();
+        q.insert("limit", "200".to_string());
+        q.insert("offset", "0".to_string());
+        self.get_page("/api/v1/gauges", &q).map(|(rows, _)| rows)
+    }
+
+    pub fn record_results(&self, id: Uuid, body: &ResultBatch) -> Result<serde_json::Value, ApiError> {
+        self.post_data(&format!("/api/v1/inspections/{id}/results"), body)
+    }
+
+    pub fn add_defect(&self, id: Uuid, body: &NewInspectionDefect) -> Result<serde_json::Value, ApiError> {
+        self.post_data(&format!("/api/v1/inspections/{id}/defects"), body)
+    }
+
+    pub fn complete_inspection(
+        &self,
+        id: Uuid,
+        body: &CompleteInspection,
+    ) -> Result<CompletedInspection, ApiError> {
+        self.post_data(&format!("/api/v1/inspections/{id}/complete"), body)
+    }
+
+    pub fn cancel_inspection(&self, id: Uuid) -> Result<Inspection, ApiError> {
+        self.post_data(&format!("/api/v1/inspections/{id}/cancel"), &serde_json::json!({}))
+    }
+
+    pub fn dispose_ncr(&self, id: Uuid, body: &DispositionRequest) -> Result<Nonconformance, ApiError> {
+        self.post_data(&format!("/api/v1/nonconformances/{id}/disposition"), body)
+    }
+
+    pub fn close_ncr(&self, id: Uuid) -> Result<Nonconformance, ApiError> {
+        self.post_data(&format!("/api/v1/nonconformances/{id}/close"), &serde_json::json!({}))
+    }
+
+    pub fn void_ncr(&self, id: Uuid, notes: &str) -> Result<Nonconformance, ApiError> {
+        self.post_data(
+            &format!("/api/v1/nonconformances/{id}/void"),
+            &NoteBody { notes: notes.to_string() },
+        )
+    }
+
+    /// Moves a corrective action. `action` is one of start, verify, close, reopen, cancel.
+    pub fn move_capa(&self, id: Uuid, action: &str, notes: &str) -> Result<CorrectiveAction, ApiError> {
+        self.post_data(
+            &format!("/api/v1/corrective-actions/{id}/{action}"),
+            &NoteBody { notes: notes.to_string() },
+        )
     }
 
     pub fn me(&self) -> Result<User, ApiError> {
@@ -209,6 +297,104 @@ impl ApiClient {
         self.post_data("/api/v1/lots", body)
     }
 
+    /// Lists any paged collection as JSON objects so every plant record can be managed.
+    pub fn list_json(&self, path: &str) -> Result<Vec<serde_json::Value>, ApiError> {
+        let mut params = HashMap::new();
+        params.insert("limit", "200".to_string());
+        params.insert("offset", "0".to_string());
+        let (rows, _page): (Vec<serde_json::Value>, Page) = self.get_page(path, &params)?;
+        Ok(rows)
+    }
+
+    pub fn list_json_query(
+        &self,
+        path: &str,
+        extra: &[(&str, String)],
+    ) -> Result<Vec<serde_json::Value>, ApiError> {
+        let mut params = HashMap::new();
+        params.insert("limit", "200".to_string());
+        params.insert("offset", "0".to_string());
+        for (k, v) in extra {
+            if !v.is_empty() {
+                params.insert(*k, v.clone());
+            }
+        }
+        let (rows, _page): (Vec<serde_json::Value>, Page) = self.get_page(path, &params)?;
+        Ok(rows)
+    }
+
+    pub fn get_json(&self, path: &str) -> Result<serde_json::Value, ApiError> {
+        self.get_data(path)
+    }
+
+    pub fn get_list_envelope(
+        &self,
+        path: &str,
+        extra: &[(&str, String)],
+    ) -> Result<Vec<serde_json::Value>, ApiError> {
+        let mut params = HashMap::new();
+        params.insert("limit", "100".to_string());
+        for (k, v) in extra {
+            if !v.is_empty() {
+                params.insert(*k, v.clone());
+            }
+        }
+        let env: DataEnvelope<Vec<serde_json::Value>> =
+            self.request_json("GET", path, None::<&()>, &params)?;
+        Ok(env.data)
+    }
+
+    pub fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value, ApiError> {
+        self.post_data(path, body)
+    }
+
+    pub fn patch_json(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value, ApiError> {
+        self.patch_data(path, body)
+    }
+
+    pub fn delete_path(&self, path: &str) -> Result<(), ApiError> {
+        let url = format!("{}{}", self.base_url, path);
+        let mut req = self.agent.delete(&url).set("Accept", "application/json");
+        if let Some(token) = &self.access_token {
+            req = req.set("Authorization", &format!("Bearer {token}"));
+        }
+        match req.call() {
+            Ok(resp) if (200..300).contains(&resp.status()) => Ok(()),
+            Ok(resp) => Err(ApiError::Http {
+                status: resp.status(),
+                code: "http".into(),
+                message: "delete failed".into(),
+            }),
+            Err(ureq::Error::Status(status, resp)) => {
+                let text = resp.into_string().unwrap_or_default();
+                Err(parse_error(status, &text))
+            }
+            Err(e) => Err(ApiError::Transport(e.to_string())),
+        }
+    }
+
+    pub fn download(&self, path: &str) -> Result<Vec<u8>, ApiError> {
+        let url = format!("{}{}", self.base_url, path);
+        let mut req = self.agent.get(&url);
+        if let Some(token) = &self.access_token {
+            req = req.set("Authorization", &format!("Bearer {token}"));
+        }
+        match req.call() {
+            Ok(resp) => {
+                let mut buf = Vec::new();
+                resp.into_reader()
+                    .read_to_end(&mut buf)
+                    .map_err(|e| ApiError::Transport(e.to_string()))?;
+                Ok(buf)
+            }
+            Err(ureq::Error::Status(status, resp)) => {
+                let text = resp.into_string().unwrap_or_default();
+                Err(parse_error(status, &text))
+            }
+            Err(e) => Err(ApiError::Transport(e.to_string())),
+        }
+    }
+
     fn get_data<T: DeserializeOwned>(&self, path: &str) -> Result<T, ApiError> {
         let env: DataEnvelope<T> = self.request_json("GET", path, None::<&()>, &HashMap::new())?;
         Ok(env.data)
@@ -293,6 +479,7 @@ impl ApiClient {
                 if !(200..300).contains(&status) {
                     return Err(parse_error(status, &text));
                 }
+                let text = if text.trim().is_empty() { "null".to_string() } else { text };
                 serde_json::from_str(&text).map_err(|e| ApiError::Decode(e.to_string()))
             }
             Err(ureq::Error::Status(status, resp)) => {
@@ -334,11 +521,13 @@ fn transport(err: ureq::Error) -> ApiError {
     }
 }
 
-fn trim_slash(mut s: String) -> String {
-    while s.ends_with('/') {
-        s.pop();
+/// Also drops a pasted `/api/v1`, since every request path already starts with it.
+fn trim_slash(s: String) -> String {
+    let mut s = s.trim().trim_end_matches('/').to_string();
+    if s.ends_with("/api/v1") {
+        s.truncate(s.len() - "/api/v1".len());
     }
-    s
+    s.trim_end_matches('/').to_string()
 }
 
 fn urlencoding(s: &str) -> String {
@@ -361,6 +550,7 @@ mod tests {
     #[test]
     fn trim_slash_removes_trailing() {
         assert_eq!(trim_slash("http://localhost:8080/".into()), "http://localhost:8080");
+        assert_eq!(trim_slash(" http://shop:8080/api/v1/ ".into()), "http://shop:8080");
     }
 
     #[test]

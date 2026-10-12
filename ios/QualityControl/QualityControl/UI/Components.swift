@@ -329,29 +329,3 @@ enum ListSort: String, CaseIterable, Identifiable, CustomStringConvertible {
         }
     }
 }
-
-extension AppSection {
-    @ViewBuilder
-    func destination() -> some View {
-        switch self {
-        case .dashboard: DashboardView()
-        case .lots: LotsView()
-        case .inspections: InspectionsView()
-        case .nonconformances: NonconformancesView()
-        case .correctiveActions: CorrectiveActionsView()
-        case .measurements: MeasurementsView()
-        case .products: ProductsView()
-        case .plans: PlansView()
-        case .sites: SitesView()
-        case .stations: StationsView()
-        case .suppliers: SuppliersView()
-        case .gauges: GaugesView()
-        case .defects: DefectCodesView()
-        case .users: UsersView()
-        case .audit: AuditView()
-        case .account: AccountView()
-        case .settings: SettingsView()
-        case .tools: ToolsView()
-        }
-    }
-}

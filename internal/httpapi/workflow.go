@@ -201,6 +201,13 @@ func (s *Server) setLotStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := s.store.SetLotStatus(r.Context(), s.actor(r), id, in.Status)
+	if err == nil {
+		s.enqueueEvent(domain.EventLotStatusChanged, map[string]any{
+			"lot_id":     v.ID,
+			"lot_number": v.LotNumber,
+			"status":     v.Status,
+		})
+	}
 	s.one(w, r, v, err)
 }
 
@@ -323,6 +330,17 @@ func (s *Server) completeInspection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := s.store.CompleteInspection(r.Context(), s.actor(r), id, in)
+	if err == nil {
+		s.enqueueEvent(domain.EventInspectionCompleted, map[string]any{
+			"inspection_id":     v.Inspection.ID,
+			"inspection_number": v.Inspection.InspectionNumber,
+			"lot_id":            v.Inspection.LotID,
+			"result":            v.Inspection.Result,
+		})
+		if v.Nonconformance != nil {
+			s.enqueueEvent(domain.EventNCRCreated, ncrEvent(*v.Nonconformance))
+		}
+	}
 	s.one(w, r, v, err)
 }
 

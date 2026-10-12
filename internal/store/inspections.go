@@ -158,6 +158,9 @@ func (s *Store) CreateInspection(ctx context.Context, actor domain.Actor, in dom
 		if lot.Status == domain.LotClosed {
 			return invalid("reopen the lot before inspecting it")
 		}
+		if lot.Status == domain.LotOnHold {
+			return invalid("a supervisor must release the hold before this lot is inspected again")
+		}
 		var plan domain.InspectionPlan
 		if in.PlanID != nil {
 			plan, err = scanPlan(tx.QueryRow(ctx, `SELECT `+planCols+` FROM inspection_plans WHERE id = $1`, *in.PlanID))

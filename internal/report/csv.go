@@ -18,8 +18,13 @@ func WriteCSV(header []string, rows [][]string) ([]byte, error) {
 	if err := w.Write(header); err != nil {
 		return nil, err
 	}
+	safe := make([]string, 0, len(header))
 	for _, row := range rows {
-		if err := w.Write(row); err != nil {
+		safe = safe[:0]
+		for _, cell := range row {
+			safe = append(safe, SafeCell(cell))
+		}
+		if err := w.Write(safe); err != nil {
 			return nil, err
 		}
 	}
@@ -28,6 +33,22 @@ func WriteCSV(header []string, rows [][]string) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// SafeCell stops spreadsheet apps from running typed text as a formula.
+// Cells that start with = + - @ tab or CR get a leading quote, unless they are plain numbers.
+func SafeCell(s string) string {
+	if s == "" {
+		return s
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		if _, err := strconv.ParseFloat(s, 64); err == nil {
+			return s
+		}
+		return "'" + s
+	}
+	return s
 }
 
 // FormatTime formats a time for CSV cells.

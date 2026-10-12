@@ -1,6 +1,16 @@
 use crate::api::{CorrectiveAction, Inspection, Nonconformance};
 use std::path::Path;
 
+/// Stops spreadsheet apps from running typed text as a formula. Plain numbers pass through.
+fn safe(s: &str) -> String {
+    match s.as_bytes().first() {
+        Some(b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r') if s.parse::<f64>().is_err() => {
+            format!("'{s}")
+        }
+        _ => s.to_string(),
+    }
+}
+
 pub fn export_inspections(path: &Path, rows: &[Inspection]) -> Result<(), String> {
     let mut wtr = csv::Writer::from_path(path).map_err(|e| e.to_string())?;
     wtr.write_record([
@@ -32,7 +42,7 @@ pub fn export_inspections(path: &Path, rows: &[Inspection]) -> Result<(), String
                 .map(|t| t.to_rfc3339())
                 .unwrap_or_default(),
             r.notes.as_str(),
-        ])
+        ].map(safe))
         .map_err(|e| e.to_string())?;
     }
     wtr.flush().map_err(|e| e.to_string())
@@ -63,7 +73,7 @@ pub fn export_ncrs(path: &Path, rows: &[Nonconformance]) -> Result<(), String> {
             &r.product_id.to_string(),
             &r.opened_at.to_rfc3339(),
             r.description.as_str(),
-        ])
+        ].map(safe))
         .map_err(|e| e.to_string())?;
     }
     wtr.flush().map_err(|e| e.to_string())
@@ -90,7 +100,7 @@ pub fn export_capas(path: &Path, rows: &[CorrectiveAction]) -> Result<(), String
             r.root_cause.as_str(),
             r.action_plan.as_str(),
             &r.opened_at.to_rfc3339(),
-        ])
+        ].map(safe))
         .map_err(|e| e.to_string())?;
     }
     wtr.flush().map_err(|e| e.to_string())
@@ -101,6 +111,14 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use uuid::Uuid;
+
+    #[test]
+    fn safe_escapes_formulas_not_numbers() {
+        assert_eq!(safe("=1+1"), "'=1+1");
+        assert_eq!(safe("@SUM(A1)"), "'@SUM(A1)");
+        assert_eq!(safe("-2.5"), "-2.5");
+        assert_eq!(safe("Weld miss"), "Weld miss");
+    }
 
     #[test]
     fn export_inspections_writes_header() {

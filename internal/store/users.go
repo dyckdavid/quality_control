@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"quality_control/internal/auth"
 	"quality_control/internal/domain"
@@ -160,6 +162,10 @@ func (s *Store) UpdateUser(ctx context.Context, actor domain.Actor, id uuid.UUID
 		}
 		if current.Role == domain.RoleAdmin && current.Active && (nextRole != domain.RoleAdmin || !nextActive) {
 			var admins int
+			// Lock every admin row so two admins cannot demote each other at once.
+			if _, err := tx.Exec(ctx, `SELECT id FROM users WHERE role = 'admin' AND active ORDER BY id FOR UPDATE`); err != nil {
+				return mapErr(err)
+			}
 			if err := tx.QueryRow(ctx, `SELECT count(*) FROM users WHERE role = 'admin' AND active AND id <> $1`, id).Scan(&admins); err != nil {
 				return mapErr(err)
 			}
@@ -229,6 +235,12 @@ func (s *Store) setPassword(ctx context.Context, actor domain.Actor, id uuid.UUI
 	})
 }
 
+// dummyHash is compared against for unknown usernames so they take as long as real ones.
+var dummyHash = sync.OnceValue(func() string {
+	h, _ := auth.HashPassword("unknown-user-timing-pad")
+	return h
+})
+
 // Authenticate checks a username and password and records a successful login.
 func (s *Store) Authenticate(ctx context.Context, username, password string, actor domain.Actor) (domain.User, error) {
 	_, _ = s.pool.Exec(ctx, `DELETE FROM refresh_tokens WHERE expires_at < now() - interval '1 day'`)
@@ -237,6 +249,7 @@ func (s *Store) Authenticate(ctx context.Context, username, password string, act
 	var u domain.User
 	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.FullName, &u.Role, &u.Active, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt, &hash); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			auth.CheckPassword(dummyHash(), password)
 			return domain.User{}, fail(ErrUnauthorized, "username or password is incorrect")
 		}
 		return domain.User{}, mapErr(err)
@@ -365,4 +378,17 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+// clip shortens s to at most n bytes without splitting a UTF-8 character,
+// dropping invalid bytes Postgres would reject.
+func clip(s string, n int) string {
+	s = strings.ToValidUTF8(s, "")
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }

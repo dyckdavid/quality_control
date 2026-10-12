@@ -39,16 +39,16 @@ type ReportNCRRow struct {
 
 // ReportCAPARow is one CAPA export line.
 type ReportCAPARow struct {
-	CANumber    string
-	Title       string
-	Status      string
-	NCRNumber   string
-	Owner       string
-	DueDate     *string
-	OpenedAt    time.Time
-	ClosedAt    *time.Time
-	RootCause   string
-	ActionPlan  string
+	CANumber   string
+	Title      string
+	Status     string
+	NCRNumber  string
+	Owner      string
+	DueDate    *string
+	OpenedAt   time.Time
+	ClosedAt   *time.Time
+	RootCause  string
+	ActionPlan string
 }
 
 // ReportFilter limits export queries.

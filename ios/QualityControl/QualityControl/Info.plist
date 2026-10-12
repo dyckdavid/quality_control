@@ -12,7 +12,7 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Quality Control connects to the plant server on your local network.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Quality Control captures photos of lots and inspections for the quality record.</string>
+	<string>Quality Control scans lot tags, gauge labels, and part barcodes, and captures photos of lots and inspections for the quality record.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Quality Control attaches existing photos to inspections and nonconformances.</string>
 </dict>

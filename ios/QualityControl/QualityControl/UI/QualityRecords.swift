@@ -69,16 +69,16 @@ struct NonconformancesView: View {
                 )
             }
         }
-        .navigationTitle("Nonconformances")
+        .navigationTitle("Alerts")
         .navigationDestination(for: UUID.self) { NCRDetailView(id: $0) }
         .searchable(text: $search, prompt: "NCR number or title")
-        .safeAreaInset(edge: .top) {
+        .safeAreaBar(edge: .top) {
             VStack(spacing: 8) {
                 chipRow(title: "Status", values: model.enums.ncrStatuses, selection: $status)
                 chipRow(title: "Severity", values: model.enums.severities, selection: $severity)
             }
             .padding(.vertical, 8)
-            .background(QCTheme.canvas.opacity(0.95))
+            .fixedSize(horizontal: false, vertical: true)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -279,7 +279,8 @@ struct NCRDetailView: View {
                 ErrorStateView(title: "NCR unavailable", message: errorMessage ?? "", retry: { Task { await reload() } })
             }
         }
-        .navigationTitle(detail?.ncr.ncrNumber ?? "Nonconformance")
+        .navigationTitle(detail?.ncr.ncrNumber ?? "Alert")
+        .recordMenu(path: "/api/v1/nonconformances/\(id.uuidString)", noun: "alert", editKind: .nonconformances) { await reload() }
         .task { await reload() }
         .refreshable { await reload() }
         .errorAlert($errorMessage)
@@ -384,18 +385,20 @@ struct CorrectiveActionsView: View {
         .navigationTitle("Corrective actions")
         .navigationDestination(for: UUID.self) { CAPADetailView(id: $0) }
         .searchable(text: $search, prompt: "CA number or title")
-        .safeAreaInset(edge: .top) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    FilterChip(title: "All", selected: status.isEmpty) { status = "" }
-                    ForEach(model.enums.capaStatuses, id: \.self) { item in
-                        FilterChip(title: displayName(item), selected: status == item) { status = item }
+        .safeAreaBar(edge: .top) {
+            VStack(spacing: 0) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        FilterChip(title: "All", selected: status.isEmpty) { status = "" }
+                        ForEach(model.enums.capaStatuses, id: \.self) { item in
+                            FilterChip(title: displayName(item), selected: status == item) { status = item }
+                        }
                     }
+                    .padding(.horizontal)
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
             }
-            .background(QCTheme.canvas.opacity(0.95))
+            .padding(.vertical, 8)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -550,6 +553,7 @@ struct CAPADetailView: View {
             }
         }
         .navigationTitle(action?.caNumber ?? "Action")
+        .recordMenu(path: "/api/v1/corrective-actions/\(id.uuidString)", noun: "corrective action", editKind: .correctiveActions) { await reload() }
         .task { await reload() }
         .refreshable { await reload() }
         .errorAlert($errorMessage)

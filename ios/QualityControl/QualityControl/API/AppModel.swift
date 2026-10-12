@@ -7,6 +7,8 @@ final class AppModel {
     var enums = APIEnums()
     var notice: String?
     var lastUsername: String
+    /// The open tab, so any screen can jump to Scan or a list.
+    var tab: AppSection = .dashboard
     private(set) var client: APIClient
     let offline = OfflineStore()
     private let defaults = UserDefaults.standard
@@ -228,6 +230,16 @@ func displayName(_ raw: String) -> String {
     raw.replacingOccurrences(of: "_", with: " ")
 }
 
+func lotSourceName(_ raw: String) -> String {
+    switch raw {
+    case "incoming": "Bought in"
+    case "in_process": "Built here"
+    case "final": "Final"
+    case "customer_return": "Customer return"
+    default: displayName(raw)
+    }
+}
+
 func parseNumber(_ text: String) -> Double? {
     let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: ",", with: ".")
     return Double(cleaned)
@@ -235,4 +247,9 @@ func parseNumber(_ text: String) -> Double? {
 
 func formatNumber(_ value: Double) -> String {
     value.formatted(.number.precision(.fractionLength(0...4)))
+}
+
+/// A number for an edit field: no grouping and a dot for decimals, so `parseNumber` reads it back unchanged.
+func plainNumber(_ value: Double) -> String {
+    value.formatted(.number.grouping(.never).precision(.fractionLength(0...6)).locale(Locale(identifier: "en_US_POSIX")))
 }

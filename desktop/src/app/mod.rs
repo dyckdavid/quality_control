@@ -1,47 +1,150 @@
+mod bench;
+mod catalog;
+mod chrome;
+mod editor;
+mod records;
 mod theme;
 mod widgets;
 
 use crate::api::{
-    ApiClient, ApiError, CorrectiveAction, Dashboard, Inspection, InspectionDetail, Lot,
-    NcrDetail, NewCorrectiveAction, NewInspection, NewNonconformance, Nonconformance, Product,
-    TokenResponse,
+    ApiClient, ApiError, CompletedInspection, CorrectiveAction, Dashboard, DefectCode, Gauge,
+    Inspection, InspectionDetail, Lot, NcrDetail, NewCorrectiveAction, NewInspection,
+    NewNonconformance, Nonconformance, Product, Site, TokenResponse,
 };
 use crate::csv_export;
 use crate::settings::{AppSettings, ThemePreference};
 use eframe::egui;
 use poll_promise::Promise;
+use records::{ActionDraft, InspectionBundle, Workbench};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+use chrome::Btn;
 use theme::apply_theme;
-use widgets::{empty_state, error_banner, loading_spinner, searchable_field, status_badge};
+use widgets::{empty_state, error_banner, loading_spinner, quiet_button, searchable_field, status_badge};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavPage {
     Dashboard,
+    Lots,
     Inspections,
     Nonconformances,
     CorrectiveActions,
+    Measurements,
+    Products,
+    Plans,
+    Sites,
+    Stations,
+    Suppliers,
+    Gauges,
+    Defects,
+    Checklists,
+    Users,
+    Audit,
+    Webhooks,
+    Reports,
+    Search,
+    Stats,
     Settings,
 }
 
 impl NavPage {
     fn label(self) -> &'static str {
         match self {
-            NavPage::Dashboard => "Dashboard",
+            NavPage::Dashboard => "Shop",
+            NavPage::Lots => "Lots",
             NavPage::Inspections => "Inspections",
-            NavPage::Nonconformances => "Nonconformances",
-            NavPage::CorrectiveActions => "Corrective Actions",
+            NavPage::Nonconformances => "Alerts",
+            NavPage::CorrectiveActions => "Actions",
+            NavPage::Measurements => "Measurements",
+            NavPage::Products => "Products",
+            NavPage::Plans => "Plans",
+            NavPage::Sites => "Sites",
+            NavPage::Stations => "Stations",
+            NavPage::Suppliers => "Suppliers",
+            NavPage::Gauges => "Gauges",
+            NavPage::Defects => "Defects",
+            NavPage::Checklists => "Checklists",
+            NavPage::Users => "People",
+            NavPage::Audit => "Audit",
+            NavPage::Webhooks => "Webhooks",
+            NavPage::Reports => "Reports",
+            NavPage::Search => "Search",
+            NavPage::Stats => "Statistics",
             NavPage::Settings => "Settings",
         }
     }
 
-    fn all() -> &'static [NavPage] {
+    fn title(self) -> &'static str {
+        match self {
+            NavPage::Dashboard => "Shop",
+            NavPage::Nonconformances => "Nonconformances",
+            NavPage::CorrectiveActions => "Corrective actions",
+            NavPage::Users => "People",
+            NavPage::Audit => "Audit log",
+            other => other.label(),
+        }
+    }
+
+    fn lede(self) -> &'static str {
+        match self {
+            NavPage::Dashboard => "Squeeze chutes, corral gates, panels, wood stoves, and fireplaces.",
+            NavPage::Lots => "A lot is one build. It waits, gets checked, then ships.",
+            NavPage::Inspections => "A check against a build. Open one, or start the final on a lot.",
+            NavPage::Nonconformances => "A weld, a latch, a dimension, or a hearth part that did not pass.",
+            NavPage::CorrectiveActions => "The work that stops the same failure on the next build.",
+            NavPage::Measurements => "Recorded widths, heights, lengths, and collar sizes.",
+            NavPage::Products => "Squeeze chute, corral gate, corral panel, wood stove, and wood fireplace.",
+            NavPage::Plans => "The final check for a product. Dimensions are compared to the print.",
+            NavPage::Sites => "The shop.",
+            NavPage::Stations => "Fit and weld, paint and assembly, and final inspection.",
+            NavPage::Suppliers => "Where steel, glass, and hardware come from.",
+            NavPage::Gauges => "Tape, caliper, square, and weld gauge.",
+            NavPage::Defects => "Welds, edges, latches, finish, glass, gaskets, and plates.",
+            NavPage::Checklists => "Cattle equipment final, and wood stove and fireplace final.",
+            NavPage::Users => "Who can sign in, and what they are allowed to do.",
+            NavPage::Audit => "Every write the server stored.",
+            NavPage::Webhooks => "Where the server sends events.",
+            NavPage::Reports => "Download the shop as a file.",
+            NavPage::Search => "Find a chute, a gate, a stove, a check, or an alert.",
+            NavPage::Stats => "How the shop has been doing.",
+            NavPage::Settings => "Server, appearance, and the account on this Mac.",
+        }
+    }
+
+    fn floor() -> &'static [NavPage] {
         &[
             NavPage::Dashboard,
+            NavPage::Lots,
             NavPage::Inspections,
             NavPage::Nonconformances,
             NavPage::CorrectiveActions,
+            NavPage::Measurements,
+        ]
+    }
+
+    fn master() -> &'static [NavPage] {
+        &[
+            NavPage::Products,
+            NavPage::Plans,
+            NavPage::Checklists,
+            NavPage::Sites,
+            NavPage::Stations,
+            NavPage::Suppliers,
+            NavPage::Gauges,
+            NavPage::Defects,
+        ]
+    }
+
+    fn tools() -> &'static [NavPage] {
+        &[
+            NavPage::Search,
+            NavPage::Stats,
+            NavPage::Reports,
+            NavPage::Users,
+            NavPage::Audit,
+            NavPage::Webhooks,
             NavPage::Settings,
         ]
     }
@@ -64,6 +167,7 @@ struct SortState {
     asc: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DetailView {
     None,
     Inspection(Uuid),
@@ -101,12 +205,39 @@ struct NcrForm {
     error: Option<String>,
 }
 
+impl Default for NcrForm {
+    fn default() -> Self {
+        Self {
+            product_id: String::new(),
+            title: String::new(),
+            description: String::new(),
+            severity: "minor".into(),
+            quantity: "1".into(),
+            error: None,
+        }
+    }
+}
+
 struct CapaForm {
+    ncr: Option<(Uuid, String)>,
     title: String,
     root_cause: String,
     action_plan: String,
     due_date: String,
     error: Option<String>,
+}
+
+impl Default for CapaForm {
+    fn default() -> Self {
+        Self {
+            ncr: None,
+            title: String::new(),
+            root_cause: String::new(),
+            action_plan: String::new(),
+            due_date: chrono::Local::now().date_naive().to_string(),
+            error: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,9 +247,12 @@ enum ShotStep {
     WaitDashboard,
     CaptureDashboard,
     CaptureInspections,
+    CaptureWorkbench,
     CaptureNcrs,
     CaptureCapas,
     CaptureSettings,
+    CaptureLots,
+    CapturePlans,
     Done,
 }
 
@@ -140,9 +274,15 @@ pub struct QcApp {
     dashboard: Option<Dashboard>,
     inspections: Vec<Inspection>,
     ncrs: Vec<Nonconformance>,
+    /// Unfiltered open alerts for the floor page; `ncrs` follows the alert list filter.
+    floor_ncrs: Vec<Nonconformance>,
     capas: Vec<CorrectiveAction>,
     products: Vec<Product>,
     lots: Vec<Lot>,
+    sites: Vec<Site>,
+    defect_codes: Vec<DefectCode>,
+    gauges: Vec<Gauge>,
+    suppliers: Vec<serde_json::Value>,
 
     search: String,
     status_filter: String,
@@ -153,9 +293,15 @@ pub struct QcApp {
     ncr_form: NcrForm,
     capa_form: CapaForm,
 
-    inspection_detail: Option<InspectionDetail>,
+    workbench: Option<Workbench>,
     ncr_detail: Option<NcrDetail>,
     capa_detail: Option<CorrectiveAction>,
+    action_error: Option<String>,
+    draft: ActionDraft,
+
+    session_at: Option<Instant>,
+    refresh_promise: Option<Promise<Result<TokenResponse, ApiError>>>,
+    retry_after_refresh: bool,
 
     login_promise: Option<Promise<Result<TokenResponse, ApiError>>>,
     dash_promise: Option<Promise<Result<Dashboard, ApiError>>>,
@@ -166,6 +312,20 @@ pub struct QcApp {
 
     loading: bool,
     list_error: Option<String>,
+    catalog_rows: Vec<serde_json::Value>,
+    catalog_promise: Option<Promise<Result<Vec<serde_json::Value>, ApiError>>>,
+    catalog_form: Vec<(String, String)>,
+    catalog_form_page: Option<NavPage>,
+    catalog_selected: Option<Uuid>,
+    catalog_plan: Option<crate::api::PlanDetail>,
+    plan_promise: Option<Promise<Result<crate::api::PlanDetail, ApiError>>>,
+    char_form: catalog::CharForm,
+    record_edit: Option<editor::RecordEdit>,
+    item_form: catalog::ItemForm,
+    /// Extra detail for the selected row, such as a checklist with its items.
+    catalog_extra: Option<serde_json::Value>,
+    extra_promise: Option<Promise<Result<serde_json::Value, ApiError>>>,
+    stats_text: Option<String>,
 
     screenshot_dir: Option<PathBuf>,
     shot_step: Option<ShotStep>,
@@ -181,25 +341,37 @@ enum ListPayload {
 }
 
 enum DetailPayload {
-    Inspection(InspectionDetail),
+    Inspection(Box<InspectionBundle>),
     Ncr(NcrDetail),
     Capa(CorrectiveAction),
 }
 
 enum MutatePayload {
     Ok(String),
-    InspectionCreated(InspectionDetail),
-    NcrSaved(Nonconformance),
-    CapaSaved(CorrectiveAction),
+    Stats(String),
+    InspectionCreated(Box<InspectionDetail>),
+    NcrSaved(Box<Nonconformance>),
+    CapaSaved(Box<CorrectiveAction>),
+    /// A status change on the open record: show the message and load it again.
+    Reload(String),
+    /// The open record was deleted: close it and reload the list.
+    Deleted(String),
+    Completed(Box<CompletedInspection>),
 }
 
 struct BootstrapPayload {
     products: Vec<Product>,
     lots: Vec<Lot>,
+    ncrs: Vec<Nonconformance>,
+    sites: Vec<Site>,
+    defect_codes: Vec<DefectCode>,
+    gauges: Vec<Gauge>,
+    suppliers: Vec<serde_json::Value>,
 }
 
 impl QcApp {
     pub fn new(cc: &eframe::CreationContext<'_>, opts: LaunchOptions) -> Self {
+        chrome::install_fonts(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx, opts.settings.theme);
         egui_extras::install_image_loaders(&cc.egui_ctx);
 
@@ -222,9 +394,14 @@ impl QcApp {
             dashboard: None,
             inspections: Vec::new(),
             ncrs: Vec::new(),
+            floor_ncrs: Vec::new(),
             capas: Vec::new(),
             products: Vec::new(),
             lots: Vec::new(),
+            sites: Vec::new(),
+            defect_codes: Vec::new(),
+            gauges: Vec::new(),
+            suppliers: Vec::new(),
             search: String::new(),
             status_filter: String::new(),
             sort: SortState::default(),
@@ -235,24 +412,16 @@ impl QcApp {
                 notes: String::new(),
                 error: None,
             },
-            ncr_form: NcrForm {
-                product_id: String::new(),
-                title: String::new(),
-                description: String::new(),
-                severity: "minor".into(),
-                quantity: "1".into(),
-                error: None,
-            },
-            capa_form: CapaForm {
-                title: String::new(),
-                root_cause: String::new(),
-                action_plan: String::new(),
-                due_date: chrono::Utc::now().date_naive().to_string(),
-                error: None,
-            },
-            inspection_detail: None,
+            ncr_form: NcrForm::default(),
+            capa_form: CapaForm::default(),
+            workbench: None,
             ncr_detail: None,
             capa_detail: None,
+            action_error: None,
+            draft: ActionDraft::default(),
+            session_at: None,
+            refresh_promise: None,
+            retry_after_refresh: false,
             login_promise: None,
             dash_promise: None,
             list_promise: None,
@@ -261,6 +430,19 @@ impl QcApp {
             bootstrap_promise: None,
             loading: false,
             list_error: None,
+            catalog_rows: Vec::new(),
+            catalog_promise: None,
+            catalog_form: Vec::new(),
+            catalog_form_page: None,
+            catalog_selected: None,
+            catalog_plan: None,
+            plan_promise: None,
+            char_form: catalog::CharForm::default(),
+            record_edit: None,
+            item_form: catalog::ItemForm::default(),
+            catalog_extra: None,
+            extra_promise: None,
+            stats_text: None,
             shot_step: if opts.screenshot_dir.is_some() {
                 Some(ShotStep::WaitLogin)
             } else {
@@ -296,6 +478,7 @@ impl QcApp {
         self.dash_promise = Some(Promise::spawn_thread("dashboard", move || {
             client.dashboard()
         }));
+        self.spawn_bootstrap();
     }
 
     fn spawn_list(&mut self) {
@@ -330,18 +513,38 @@ impl QcApp {
 
     fn spawn_bootstrap(&mut self) {
         let client = self.authed_client();
+        if self.bootstrap_promise.is_some() {
+            return;
+        }
         self.bootstrap_promise = Some(Promise::spawn_thread("bootstrap", move || {
             let (products, _) = client.list_products(None)?;
             let (lots, _) = client.list_lots(None)?;
-            Ok(BootstrapPayload { products, lots })
+            let (ncrs, _) = client.list_ncrs(None, 200, 0)?;
+            let (sites, _) = client.list_sites()?;
+            let defect_codes = client.list_defect_codes()?;
+            let gauges = client.list_gauges()?;
+            let suppliers = client.list_json("/api/v1/suppliers").unwrap_or_default();
+            Ok(BootstrapPayload {
+                products,
+                lots,
+                ncrs,
+                sites,
+                defect_codes,
+                gauges,
+                suppliers,
+            })
         }));
     }
 
     fn spawn_detail(&mut self, detail: DetailView) {
         let client = self.authed_client();
-        self.loading = true;
         self.detail_promise = Some(Promise::spawn_thread("detail", move || match detail {
-            DetailView::Inspection(id) => Ok(DetailPayload::Inspection(client.get_inspection(id)?)),
+            DetailView::Inspection(id) => {
+                let detail = client.get_inspection(id)?;
+                let plan = client.get_plan(detail.inspection.plan_id).ok();
+                let lot = client.get_lot(detail.inspection.lot_id).ok();
+                Ok(DetailPayload::Inspection(Box::new(InspectionBundle { detail, plan, lot })))
+            }
             DetailView::Ncr(id) => Ok(DetailPayload::Ncr(client.get_ncr(id)?)),
             DetailView::Capa(id) => Ok(DetailPayload::Capa(client.get_capa(id)?)),
             DetailView::None => Err(ApiError::Invalid("no detail".into())),
@@ -372,11 +575,11 @@ impl QcApp {
                         self.settings.last_username = session.user.username.clone();
                         let _ = self.settings.save();
                         self.session = Some(session);
+                        self.session_at = Some(Instant::now());
                         self.login.password.clear();
                         self.login.error = None;
                         self.page = NavPage::Dashboard;
                         self.spawn_dashboard();
-                        self.spawn_bootstrap();
                     }
                     Err(e) => {
                         self.login.error = Some(e.message());
@@ -398,7 +601,7 @@ impl QcApp {
                         self.dashboard = Some(d);
                         self.list_error = None;
                     }
-                    Err(e) => self.list_error = Some(e.message()),
+                    Err(e) => self.list_failed(e),
                 }
                 ctx.request_repaint();
             }
@@ -424,7 +627,25 @@ impl QcApp {
                         self.capas = rows;
                         self.list_error = None;
                     }
-                    Err(e) => self.list_error = Some(e.message()),
+                    Err(e) => self.list_failed(e),
+                }
+                ctx.request_repaint();
+            }
+        }
+
+        if self
+            .catalog_promise
+            .as_ref()
+            .is_some_and(|p| p.ready().is_some())
+        {
+            if let Some(p) = self.catalog_promise.take() {
+                self.loading = false;
+                match p.block_and_take() {
+                    Ok(rows) => {
+                        self.catalog_rows = rows;
+                        self.list_error = None;
+                    }
+                    Err(e) => self.list_failed(e),
                 }
                 ctx.request_repaint();
             }
@@ -436,12 +657,31 @@ impl QcApp {
             .is_some_and(|p| p.ready().is_some())
         {
             if let Some(p) = self.detail_promise.take() {
-                self.loading = false;
                 match p.block_and_take() {
-                    Ok(DetailPayload::Inspection(d)) => self.inspection_detail = Some(d),
-                    Ok(DetailPayload::Ncr(d)) => self.ncr_detail = Some(d),
-                    Ok(DetailPayload::Capa(d)) => self.capa_detail = Some(d),
-                    Err(e) => self.list_error = Some(e.message()),
+                    Ok(DetailPayload::Inspection(b)) => {
+                        if self.detail == DetailView::Inspection(b.detail.inspection.id) {
+                            match &mut self.workbench {
+                                Some(wb) => wb.absorb(*b),
+                                None => self.workbench = Some(Workbench::new(*b)),
+                            }
+                        }
+                    }
+                    Ok(DetailPayload::Ncr(d)) => {
+                        if self.detail == DetailView::Ncr(d.ncr.id) {
+                            self.ncr_detail = Some(d);
+                        }
+                    }
+                    Ok(DetailPayload::Capa(d)) => {
+                        if self.detail == DetailView::Capa(d.id) {
+                            self.capa_detail = Some(d);
+                        }
+                    }
+                    Err(e) => {
+                        if e.is_unauthorized() {
+                            self.renew_session(true);
+                        }
+                        self.action_error = Some(e.message());
+                    }
                 }
                 ctx.request_repaint();
             }
@@ -458,17 +698,79 @@ impl QcApp {
                     Ok(MutatePayload::Ok(msg)) => {
                         self.status_msg = Some(msg);
                         self.form = FormMode::None;
+                        self.catalog_form_page = None;
                         self.refresh_current();
+                        if let (NavPage::Plans, Some(id)) = (self.page, self.catalog_selected) {
+                            self.catalog_plan = None;
+                            let client = self.authed_client();
+                            self.plan_promise =
+                                Some(Promise::spawn_thread("plan", move || client.get_plan(id)));
+                        }
+                        if let (NavPage::Checklists, Some(id)) = (self.page, self.catalog_selected) {
+                            self.spawn_extra(id);
+                        }
+                        self.spawn_bootstrap();
                     }
-                    Ok(MutatePayload::InspectionCreated(_))
-                    | Ok(MutatePayload::NcrSaved(_))
-                    | Ok(MutatePayload::CapaSaved(_)) => {
-                        self.status_msg = Some("Saved.".into());
-                        self.form = FormMode::None;
+                    Ok(MutatePayload::Stats(text)) => {
+                        self.stats_text = Some(text);
+                        self.list_error = None;
+                    }
+                    Ok(MutatePayload::InspectionCreated(d)) => {
+                        self.status_msg =
+                            Some(format!("{} is open. Record the checks below.", d.inspection.inspection_number));
+                        self.insp_form.notes.clear();
+                        self.show_detail(DetailView::Inspection(d.inspection.id));
+                        self.spawn_bootstrap();
+                    }
+                    Ok(MutatePayload::NcrSaved(n)) => {
+                        self.status_msg = Some(format!("{} saved.", n.ncr_number));
+                        self.ncr_form = NcrForm::default();
+                        self.show_detail(DetailView::Ncr(n.id));
+                        self.spawn_bootstrap();
+                    }
+                    Ok(MutatePayload::CapaSaved(c)) => {
+                        self.status_msg = Some(format!("{} saved.", c.ca_number));
+                        self.capa_form = CapaForm::default();
+                        self.show_detail(DetailView::Capa(c.id));
+                    }
+                    Ok(MutatePayload::Reload(msg)) => {
+                        self.status_msg = Some(msg);
+                        self.action_error = None;
+                        self.draft = ActionDraft::default();
+                        self.spawn_detail(self.detail);
+                        self.spawn_bootstrap();
+                    }
+                    Ok(MutatePayload::Deleted(msg)) => {
+                        self.status_msg = Some(msg);
                         self.detail = DetailView::None;
+                        self.workbench = None;
+                        self.ncr_detail = None;
+                        self.capa_detail = None;
+                        self.action_error = None;
+                        self.draft = ActionDraft::default();
                         self.refresh_current();
+                        self.spawn_bootstrap();
+                    }
+                    Ok(MutatePayload::Completed(done)) => {
+                        let insp = &done.inspection;
+                        let mut msg = match insp.result.as_str() {
+                            "pass" => format!("{} passed. The lot can ship.", insp.inspection_number),
+                            "conditional" => format!("{} passed with minor defects.", insp.inspection_number),
+                            _ => format!("{} failed.", insp.inspection_number),
+                        };
+                        if let Some(n) = &done.nonconformance {
+                            msg.push_str(&format!(" Alert {} is open.", n.ncr_number));
+                        }
+                        self.status_msg = Some(msg);
+                        self.action_error = None;
+                        self.spawn_detail(self.detail);
+                        self.bootstrap_promise = None;
+                        self.spawn_bootstrap();
                     }
                     Err(e) => {
+                        if e.is_unauthorized() {
+                            self.renew_session(false);
+                        }
                         let msg = e.message();
                         match &mut self.form {
                             FormMode::CreateInspection => self.insp_form.error = Some(msg),
@@ -477,6 +779,9 @@ impl QcApp {
                             }
                             FormMode::CreateCapa | FormMode::EditCapa(_) => {
                                 self.capa_form.error = Some(msg)
+                            }
+                            FormMode::None if self.detail != DetailView::None => {
+                                self.action_error = Some(msg)
                             }
                             FormMode::None => self.list_error = Some(msg),
                         }
@@ -492,12 +797,162 @@ impl QcApp {
             .is_some_and(|p| p.ready().is_some())
         {
             if let Some(p) = self.bootstrap_promise.take() {
-                if let Ok(b) = p.block_and_take() {
-                    self.products = b.products;
-                    self.lots = b.lots;
+                match p.block_and_take() {
+                    Ok(b) => {
+                        self.products = b.products;
+                        self.lots = b.lots;
+                        self.floor_ncrs = b.ncrs;
+                        self.sites = b.sites;
+                        self.defect_codes = b.defect_codes;
+                        self.gauges = b.gauges;
+                        self.suppliers = b.suppliers;
+                    }
+                    Err(e) if e.is_unauthorized() => self.renew_session(true),
+                    Err(e) => self.list_error = Some(e.message()),
                 }
+                ctx.request_repaint();
             }
         }
+
+        if self
+            .refresh_promise
+            .as_ref()
+            .is_some_and(|p| p.ready().is_some())
+        {
+            if let Some(p) = self.refresh_promise.take() {
+                match p.block_and_take() {
+                    Ok(fresh) => {
+                        self.client.set_access_token(Some(fresh.access_token.clone()));
+                        self.session = Some(fresh);
+                        self.session_at = Some(Instant::now());
+                        if std::mem::take(&mut self.retry_after_refresh) {
+                            self.list_error = None;
+                            self.action_error = None;
+                            self.refresh_current();
+                            if self.detail != DetailView::None {
+                                self.spawn_detail(self.detail);
+                            }
+                        }
+                    }
+                    Err(e) if matches!(e, ApiError::Transport(_)) => {
+                        self.list_error = Some(e.message());
+                    }
+                    Err(_) => {
+                        self.sign_out();
+                        self.login.error = Some("You were signed out. Sign in again.".into());
+                    }
+                }
+                ctx.request_repaint();
+            }
+        }
+
+        let busy = self.dash_promise.is_some()
+            || self.list_promise.is_some()
+            || self.catalog_promise.is_some()
+            || self.detail_promise.is_some()
+            || self.mutate_promise.is_some()
+            || self.login_promise.is_some();
+        self.loading = busy;
+        if busy || self.bootstrap_promise.is_some() || self.refresh_promise.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
+    }
+
+    fn poll_all(&mut self, ctx: &egui::Context) {
+        self.poll_promises(ctx);
+        self.poll_plan();
+        self.poll_extra();
+    }
+
+    fn list_failed(&mut self, e: ApiError) {
+        if e.is_unauthorized() {
+            self.renew_session(true);
+            return;
+        }
+        self.list_error = Some(e.message());
+    }
+
+    /// Trades the refresh token for a new access token. With `retry`, reloads what failed.
+    fn renew_session(&mut self, retry: bool) {
+        self.retry_after_refresh |= retry;
+        if self.refresh_promise.is_some() {
+            return;
+        }
+        let Some(s) = &self.session else {
+            return;
+        };
+        let token = s.refresh_token.clone();
+        let mut client = self.client.clone();
+        client.set_base_url(self.settings.server_url.clone());
+        client.set_access_token(None);
+        self.refresh_promise = Some(Promise::spawn_thread("refresh", move || client.refresh(&token)));
+    }
+
+    fn keep_session_fresh(&mut self) {
+        let (Some(s), Some(at)) = (&self.session, self.session_at) else {
+            return;
+        };
+        let life = Duration::from_secs(s.expires_in.max(60) as u64);
+        if at.elapsed() >= life.mul_f32(0.75) {
+            self.renew_session(false);
+        }
+    }
+
+    fn sign_out(&mut self) {
+        if let Some(s) = self.session.take() {
+            let client = self.authed_client_for(&s);
+            let token = s.refresh_token;
+            std::thread::spawn(move || {
+                let _ = client.logout(&token);
+            });
+        }
+        self.client.set_access_token(None);
+        self.session_at = None;
+        self.refresh_promise = None;
+        self.retry_after_refresh = false;
+        self.dashboard = None;
+        self.inspections.clear();
+        self.ncrs.clear();
+        self.floor_ncrs.clear();
+        self.capas.clear();
+        self.lots.clear();
+        self.products.clear();
+        self.catalog_rows.clear();
+        self.workbench = None;
+        self.ncr_detail = None;
+        self.capa_detail = None;
+        self.detail = DetailView::None;
+        self.form = FormMode::None;
+        self.status_msg = None;
+        self.list_error = None;
+        self.action_error = None;
+        self.page = NavPage::Dashboard;
+    }
+
+    fn authed_client_for(&self, s: &TokenResponse) -> ApiClient {
+        let mut c = self.client.clone();
+        c.set_base_url(self.settings.server_url.clone());
+        c.set_access_token(Some(s.access_token.clone()));
+        c
+    }
+
+    /// Opens a record on its own page, dropping whatever detail was showing.
+    fn show_detail(&mut self, view: DetailView) {
+        let page = match view {
+            DetailView::Inspection(_) => NavPage::Inspections,
+            DetailView::Ncr(_) => NavPage::Nonconformances,
+            DetailView::Capa(_) => NavPage::CorrectiveActions,
+            DetailView::None => self.page,
+        };
+        self.goto(page);
+        self.form = FormMode::None;
+        self.workbench = None;
+        self.ncr_detail = None;
+        self.capa_detail = None;
+        self.action_error = None;
+        self.draft = ActionDraft::default();
+        self.detail = view;
+        self.spawn_detail(view);
     }
 
     fn refresh_current(&mut self) {
@@ -506,7 +961,10 @@ impl QcApp {
             NavPage::Inspections | NavPage::Nonconformances | NavPage::CorrectiveActions => {
                 self.spawn_list()
             }
-            NavPage::Settings => {}
+            NavPage::Settings | NavPage::Reports => {}
+            NavPage::Stats => self.spawn_stats(),
+            page if page.catalog().is_some() => self.spawn_catalog(),
+            _ => {}
         }
     }
 
@@ -530,9 +988,17 @@ impl QcApp {
         if !self.logged_in() {
             return;
         }
-        if esc {
-            self.detail = DetailView::None;
-            self.form = FormMode::None;
+        if esc && !ctx.wants_keyboard_input() {
+            if !matches!(self.form, FormMode::None) {
+                self.form = FormMode::None;
+            } else if self.detail != DetailView::None {
+                self.detail = DetailView::None;
+                self.workbench = None;
+                self.ncr_detail = None;
+                self.capa_detail = None;
+                self.action_error = None;
+                self.refresh_current();
+            }
         }
         if mod_key && r {
             self.refresh_current();
@@ -542,9 +1008,9 @@ impl QcApp {
         }
         if mod_key && n {
             match self.page {
-                NavPage::Inspections => self.form = FormMode::CreateInspection,
-                NavPage::Nonconformances => self.form = FormMode::CreateNcr,
-                NavPage::CorrectiveActions => self.form = FormMode::CreateCapa,
+                NavPage::Inspections => self.open_new_form(FormMode::CreateInspection),
+                NavPage::Nonconformances => self.open_new_form(FormMode::CreateNcr),
+                NavPage::CorrectiveActions => self.open_new_form(FormMode::CreateCapa),
                 _ => {}
             }
         }
@@ -568,6 +1034,15 @@ impl QcApp {
         }
     }
 
+    fn nav_group(&mut self, ui: &mut egui::Ui, title: &str, pages: &[NavPage]) {
+        chrome::nav_heading(ui, title);
+        for page in pages {
+            if chrome::nav_row(ui, page.label(), self.page == *page).clicked() {
+                self.goto(*page);
+            }
+        }
+    }
+
     fn goto(&mut self, page: NavPage) {
         if self.page != page {
             self.page = page;
@@ -575,6 +1050,12 @@ impl QcApp {
             self.form = FormMode::None;
             self.search.clear();
             self.status_filter.clear();
+            self.catalog_rows.clear();
+            self.catalog_selected = None;
+            self.catalog_plan = None;
+            self.catalog_extra = None;
+            self.record_edit = None;
+            self.list_error = None;
             self.refresh_current();
         }
     }
@@ -710,11 +1191,24 @@ impl QcApp {
         }
     }
 
+    fn open_new_form(&mut self, mode: FormMode) {
+        match mode {
+            FormMode::CreateNcr => self.ncr_form = NcrForm::default(),
+            FormMode::CreateCapa => self.capa_form = CapaForm::default(),
+            FormMode::CreateInspection => self.insp_form.error = None,
+            _ => {}
+        }
+        self.form = mode;
+    }
+
     fn submit_inspection(&mut self) {
+        if self.mutate_promise.is_some() {
+            return;
+        }
         let lot_id = match Uuid::parse_str(self.insp_form.lot_id.trim()) {
             Ok(id) => id,
             Err(_) => {
-                self.insp_form.error = Some("lot_id must be a valid UUID.".into());
+                self.insp_form.error = Some("Pick the build to check.".into());
                 return;
             }
         };
@@ -731,15 +1225,18 @@ impl QcApp {
         self.insp_form.error = None;
         self.mutate_promise = Some(Promise::spawn_thread("create-insp", move || {
             let d = client.create_inspection(&body)?;
-            Ok(MutatePayload::InspectionCreated(d))
+            Ok(MutatePayload::InspectionCreated(Box::new(d)))
         }));
     }
 
     fn submit_ncr(&mut self) {
+        if self.mutate_promise.is_some() {
+            return;
+        }
         let product_id = match Uuid::parse_str(self.ncr_form.product_id.trim()) {
             Ok(id) => id,
             Err(_) => {
-                self.ncr_form.error = Some("product_id must be a valid UUID.".into());
+                self.ncr_form.error = Some("Pick the product.".into());
                 return;
             }
         };
@@ -769,7 +1266,7 @@ impl QcApp {
                 };
                 self.mutate_promise = Some(Promise::spawn_thread("create-ncr", move || {
                     let d = client.create_ncr(&body)?;
-                    Ok(MutatePayload::NcrSaved(d))
+                    Ok(MutatePayload::NcrSaved(Box::new(d)))
                 }));
             }
             FormMode::EditNcr(id) => {
@@ -781,7 +1278,7 @@ impl QcApp {
                 };
                 self.mutate_promise = Some(Promise::spawn_thread("edit-ncr", move || {
                     let d = client.update_ncr(id, &body)?;
-                    Ok(MutatePayload::NcrSaved(d))
+                    Ok(MutatePayload::NcrSaved(Box::new(d)))
                 }));
             }
             _ => {}
@@ -789,6 +1286,9 @@ impl QcApp {
     }
 
     fn submit_capa(&mut self) {
+        if self.mutate_promise.is_some() {
+            return;
+        }
         if self.capa_form.title.trim().is_empty() {
             self.capa_form.error = Some("Title is required.".into());
             return;
@@ -803,7 +1303,7 @@ impl QcApp {
         match self.form {
             FormMode::CreateCapa => {
                 let body = NewCorrectiveAction {
-                    nonconformance_id: None,
+                    nonconformance_id: self.capa_form.ncr.as_ref().map(|(id, _)| *id),
                     title: self.capa_form.title.clone(),
                     root_cause: self.capa_form.root_cause.clone(),
                     action_plan: self.capa_form.action_plan.clone(),
@@ -812,7 +1312,7 @@ impl QcApp {
                 };
                 self.mutate_promise = Some(Promise::spawn_thread("create-capa", move || {
                     let d = client.create_capa(&body)?;
-                    Ok(MutatePayload::CapaSaved(d))
+                    Ok(MutatePayload::CapaSaved(Box::new(d)))
                 }));
             }
             FormMode::EditCapa(id) => {
@@ -824,7 +1324,7 @@ impl QcApp {
                 };
                 self.mutate_promise = Some(Promise::spawn_thread("edit-capa", move || {
                     let d = client.update_capa(id, &body)?;
-                    Ok(MutatePayload::CapaSaved(d))
+                    Ok(MutatePayload::CapaSaved(Box::new(d)))
                 }));
             }
             _ => {}
@@ -891,48 +1391,117 @@ impl QcApp {
                 }
             }
             ShotStep::WaitDashboard => {
-                if self.logged_in() && self.dashboard.is_some() && self.shot_frames > 12 {
-                    self.shot_step = Some(ShotStep::CaptureDashboard);
-                    self.shot_frames = 0;
-                } else if self.shot_frames > 180 {
+                let ready = self.logged_in() && self.dashboard.is_some() && self.shot_frames > 12;
+                if ready || self.shot_frames > 180 {
                     self.shot_step = Some(ShotStep::CaptureDashboard);
                     self.shot_frames = 0;
                 }
             }
             ShotStep::CaptureDashboard => {
                 self.page = NavPage::Dashboard;
-                self.request_screenshot(ctx, "02_dashboard");
-                self.shot_step = Some(ShotStep::CaptureInspections);
-                self.shot_frames = 0;
-                self.goto(NavPage::Inspections);
+                if self.shot_frames == 2 {
+                    self.request_screenshot(ctx, "02_dashboard");
+                } else if self.shot_frames > 6 && self.pending_shot_name.is_none() {
+                    self.shot_step = Some(ShotStep::CaptureInspections);
+                    self.shot_frames = 0;
+                    self.goto(NavPage::Inspections);
+                }
             }
             ShotStep::CaptureInspections => {
-                if self.shot_frames > 20 {
+                if self.page != NavPage::Inspections {
+                    self.goto(NavPage::Inspections);
+                }
+                if self.shot_frames == 20 {
                     self.request_screenshot(ctx, "03_inspections");
+                } else if self.shot_frames > 24 && self.pending_shot_name.is_none() {
+                    self.shot_step = Some(ShotStep::CaptureWorkbench);
+                    self.shot_frames = 0;
+                    let open = self
+                        .inspections
+                        .iter()
+                        .find(|i| i.status == "in_progress")
+                        .or(self.inspections.first())
+                        .map(|i| i.id);
+                    if let Some(id) = open {
+                        self.show_detail(DetailView::Inspection(id));
+                    }
+                }
+            }
+            ShotStep::CaptureWorkbench => {
+                let ready = self.workbench.is_some() && self.shot_frames > 10;
+                if (ready || self.shot_frames > 120) && self.pending_shot_name.is_none() && self.shot_frames < 1000 {
+                    self.request_screenshot(ctx, "03b_workbench");
+                    self.shot_frames = 1000;
+                } else if self.shot_frames > 1004 && self.pending_shot_name.is_none() {
                     self.shot_step = Some(ShotStep::CaptureNcrs);
                     self.shot_frames = 0;
                     self.goto(NavPage::Nonconformances);
                 }
             }
             ShotStep::CaptureNcrs => {
-                if self.shot_frames > 20 {
+                if self.shot_frames == 20 {
                     self.request_screenshot(ctx, "04_nonconformances");
+                } else if self.shot_frames == 24 {
+                    if let Some(id) = self.ncrs.first().map(|n| n.id) {
+                        self.show_detail(DetailView::Ncr(id));
+                    }
+                } else if self.shot_frames == 50 {
+                    self.request_screenshot(ctx, "04b_alert");
+                } else if self.shot_frames > 54 && self.pending_shot_name.is_none() {
                     self.shot_step = Some(ShotStep::CaptureCapas);
                     self.shot_frames = 0;
                     self.goto(NavPage::CorrectiveActions);
                 }
             }
             ShotStep::CaptureCapas => {
-                if self.shot_frames > 20 {
+                if self.shot_frames == 20 {
                     self.request_screenshot(ctx, "05_corrective_actions");
+                } else if self.shot_frames == 24 {
+                    if let Some(id) = self.capas.first().map(|c| c.id) {
+                        self.show_detail(DetailView::Capa(id));
+                    }
+                } else if self.shot_frames == 50 {
+                    self.request_screenshot(ctx, "05b_action");
+                } else if self.shot_frames > 54 && self.pending_shot_name.is_none() {
                     self.shot_step = Some(ShotStep::CaptureSettings);
                     self.shot_frames = 0;
                     self.goto(NavPage::Settings);
                 }
             }
             ShotStep::CaptureSettings => {
-                if self.shot_frames > 12 {
+                if self.shot_frames == 12 {
                     self.request_screenshot(ctx, "06_settings");
+                } else if self.shot_frames > 16 && self.pending_shot_name.is_none() {
+                    self.shot_step = Some(ShotStep::CaptureLots);
+                    self.shot_frames = 0;
+                    self.goto(NavPage::Lots);
+                }
+            }
+            ShotStep::CaptureLots => {
+                if self.shot_frames == 20 {
+                    if let Some(id) = self.catalog_rows.first().and_then(|r| r.get("id")).and_then(|v| v.as_str()) {
+                        self.catalog_selected = Uuid::parse_str(id).ok();
+                    }
+                } else if self.shot_frames == 26 {
+                    self.request_screenshot(ctx, "07_lots");
+                } else if self.shot_frames > 30 && self.pending_shot_name.is_none() {
+                    self.shot_step = Some(ShotStep::CapturePlans);
+                    self.shot_frames = 0;
+                    self.goto(NavPage::Plans);
+                }
+            }
+            ShotStep::CapturePlans => {
+                if self.shot_frames == 20 {
+                    if let Some(id) = self.catalog_rows.first().and_then(|r| r.get("id")).and_then(|v| v.as_str()) {
+                        if let Ok(id) = Uuid::parse_str(id) {
+                            self.catalog_selected = Some(id);
+                            let client = self.authed_client();
+                            self.plan_promise = Some(Promise::spawn_thread("plan", move || client.get_plan(id)));
+                        }
+                    }
+                } else if self.shot_frames == 40 {
+                    self.request_screenshot(ctx, "08_plans");
+                } else if self.shot_frames > 44 && self.pending_shot_name.is_none() {
                     self.shot_step = Some(ShotStep::Done);
                     self.shot_frames = 0;
                 }
@@ -950,7 +1519,8 @@ impl QcApp {
 impl eframe::App for QcApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         apply_theme(ctx, self.settings.theme);
-        self.poll_promises(ctx);
+        self.poll_all(ctx);
+        self.keep_session_fresh();
         self.handle_shortcuts(ctx);
         self.drain_screenshots(ctx);
         self.advance_screenshots(ctx);
@@ -965,142 +1535,259 @@ impl eframe::App for QcApp {
             return;
         }
 
+        let sidebar = chrome::colors(ctx.style().visuals.dark_mode).sidebar;
         egui::SidePanel::left("sidebar")
-            .resizable(true)
-            .default_width(200.0)
+            .resizable(false)
+            .exact_width(248.0)
+            .show_separator_line(false)
+            .frame(
+                egui::Frame::none()
+                    .fill(sidebar)
+                    .inner_margin(egui::Margin::symmetric(12.0, 16.0)),
+            )
             .show(ctx, |ui| {
-                ui.add_space(12.0);
-                ui.heading("Quality Control");
-                if let Some(s) = &self.session {
-                    ui.label(
-                        egui::RichText::new(format!("{} · {}", s.user.full_name, s.user.role))
-                            .small()
-                            .weak(),
-                    );
-                }
-                ui.add_space(8.0);
-                ui.separator();
-                ui.add_space(4.0);
-                for page in NavPage::all() {
-                    let selected = self.page == *page;
-                    if ui
-                        .selectable_label(selected, page.label())
-                        .on_hover_text(match page {
-                            NavPage::Dashboard => "Ctrl/Cmd+1",
-                            NavPage::Inspections => "Ctrl/Cmd+2 · Ctrl/Cmd+N new",
-                            NavPage::Nonconformances => "Ctrl/Cmd+3",
-                            NavPage::CorrectiveActions => "Ctrl/Cmd+4",
-                            NavPage::Settings => "Ctrl/Cmd+5 or Ctrl/Cmd+,",
-                        })
-                        .clicked()
-                    {
-                        self.goto(*page);
-                    }
-                }
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    ui.add_space(8.0);
-                    if ui.button("Sign out").clicked() {
-                        self.session = None;
-                        self.client.set_access_token(None);
-                        self.dashboard = None;
-                    }
-                    ui.label(
-                        egui::RichText::new("Ctrl/Cmd+R refresh")
-                            .small()
-                            .weak(),
-                    );
-                });
+                self.ui_sidebar(ui);
             });
 
-        egui::TopBottomPanel::top("topbar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading(self.page.label());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if self.loading {
-                        loading_spinner(ui);
-                    }
-                    if matches!(
-                        self.page,
-                        NavPage::Inspections
-                            | NavPage::Nonconformances
-                            | NavPage::CorrectiveActions
-                    ) {
-                        if ui.button("Export CSV").clicked() {
-                            self.export_current();
-                        }
-                        if ui.button("New").clicked() {
-                            match self.page {
-                                NavPage::Inspections => self.form = FormMode::CreateInspection,
-                                NavPage::Nonconformances => self.form = FormMode::CreateNcr,
-                                NavPage::CorrectiveActions => self.form = FormMode::CreateCapa,
-                                _ => {}
-                            }
-                        }
-                        if ui.button("Refresh").clicked() {
-                            self.refresh_current();
-                        }
-                    } else if self.page == NavPage::Dashboard && ui.button("Refresh").clicked() {
-                        self.refresh_current();
-                    }
-                });
+        let canvas = chrome::colors(ctx.style().visuals.dark_mode).canvas;
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::none()
+                    .fill(canvas)
+                    .inner_margin(egui::Margin::same(28.0)),
+            )
+            .show(ctx, |ui| {
+                self.page_header(ui);
+                match self.page {
+                    NavPage::Dashboard => self.ui_dashboard(ui),
+                    NavPage::Inspections => self.ui_inspections(ui),
+                    NavPage::Nonconformances => self.ui_ncrs(ui),
+                    NavPage::CorrectiveActions => self.ui_capas(ui),
+                    NavPage::Settings => self.ui_settings(ui),
+                    _ => self.ui_catalog(ui),
+                }
             });
-            if let Some(msg) = &self.status_msg {
-                ui.label(egui::RichText::new(msg).color(egui::Color32::from_rgb(40, 140, 90)));
-            }
-            if let Some(err) = &self.list_error {
-                error_banner(ui, err);
-            }
-        });
-
-        egui::CentralPanel::default().show(ctx, |ui| match self.page {
-            NavPage::Dashboard => self.ui_dashboard(ui),
-            NavPage::Inspections => self.ui_inspections(ui),
-            NavPage::Nonconformances => self.ui_ncrs(ui),
-            NavPage::CorrectiveActions => self.ui_capas(ui),
-            NavPage::Settings => self.ui_settings(ui),
-        });
     }
 }
 
 impl QcApp {
-    fn ui_login(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(80.0);
-                ui.heading("Quality Control");
-                ui.label("Sign in to the plant API");
-                ui.add_space(16.0);
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_width(360.0);
-                    ui.label("Server URL");
-                    ui.text_edit_singleline(&mut self.settings.server_url);
-                    ui.add_space(6.0);
-                    ui.label("Username");
-                    ui.text_edit_singleline(&mut self.login.username);
-                    ui.label("Password");
-                    ui.add(egui::TextEdit::singleline(&mut self.login.password).password(true));
-                    ui.add_space(8.0);
-                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    let clicked = ui
-                        .add_enabled(!self.loading, egui::Button::new("Sign in"))
-                        .clicked();
-                    if (clicked || enter)
-                        && !self.login.username.is_empty()
-                        && !self.login.password.is_empty()
-                    {
-                        self.client.set_base_url(self.settings.server_url.clone());
-                        let _ = self.settings.save();
-                        self.spawn_login();
-                    }
-                    if self.loading {
-                        loading_spinner(ui);
-                    }
-                    if let Some(err) = &self.login.error {
-                        ui.colored_label(egui::Color32::from_rgb(200, 60, 60), err);
-                    }
-                });
+    fn ui_sidebar(&mut self, ui: &mut egui::Ui) {
+        let p = chrome::colors(true);
+        ui.horizontal(|ui| {
+            let (mark, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(mark, egui::Rounding::same(8.0), p.teal);
+            ui.painter().text(
+                mark.center(),
+                egui::Align2::CENTER_CENTER,
+                "Q",
+                chrome::semibold_id(14.0),
+                egui::Color32::WHITE,
+            );
+            ui.vertical(|ui| {
+                ui.label(chrome::semi("Quality Control", 14.5, p.sidebar_ink));
+                ui.label(
+                    egui::RichText::new("Cattle gear and hearth")
+                        .size(11.5)
+                        .color(p.sidebar_muted),
+                );
             });
         });
+        let footer = 78.0;
+        let scroll_h = (ui.available_height() - footer).max(120.0);
+        ui.allocate_ui(egui::vec2(ui.available_width(), scroll_h), |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("nav-scroll")
+                .show(ui, |ui| {
+                    self.nav_group(ui, "Shop", NavPage::floor());
+                    self.nav_group(ui, "Records", NavPage::master());
+                    self.nav_group(ui, "Tools", NavPage::tools());
+                    ui.add_space(12.0);
+                });
+        });
+        ui.add_space(8.0);
+        if let Some(s) = &self.session {
+            let name = if s.user.full_name.trim().is_empty() {
+                s.user.username.clone()
+            } else {
+                s.user.full_name.clone()
+            };
+            ui.label(chrome::semi(name, 13.0, p.sidebar_ink));
+            ui.label(
+                egui::RichText::new(s.user.role.replace('_', " "))
+                    .size(12.0)
+                    .color(p.sidebar_muted),
+            );
+        }
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), 28.0),
+            egui::Sense::click(),
+        );
+        let color = if response.hovered() {
+            p.sidebar_ink
+        } else {
+            p.sidebar_muted
+        };
+        ui.painter().text(
+            rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            "Sign out",
+            egui::FontId::proportional(13.0),
+            color,
+        );
+        if response.clicked() {
+            self.sign_out();
+        }
+    }
+
+    fn page_header(&mut self, ui: &mut egui::Ui) {
+        let p = chrome::palette(ui);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(chrome::semi(self.page.title(), 26.0, p.ink));
+                ui.add_space(2.0);
+                ui.label(egui::RichText::new(self.page.lede()).size(13.5).color(p.muted));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if self.loading {
+                    ui.spinner();
+                }
+                match self.page {
+                    NavPage::Dashboard => {
+                        if chrome::button(ui, "Refresh", Btn::Quiet).clicked() {
+                            self.refresh_current();
+                        }
+                    }
+                    NavPage::Inspections | NavPage::Nonconformances | NavPage::CorrectiveActions => {
+                        let (primary, mode) = match self.page {
+                            NavPage::Inspections => ("New inspection", FormMode::CreateInspection),
+                            NavPage::Nonconformances => ("New alert", FormMode::CreateNcr),
+                            _ => ("New action", FormMode::CreateCapa),
+                        };
+                        if chrome::button(ui, primary, Btn::Primary).clicked() {
+                            self.open_new_form(mode);
+                        }
+                        if chrome::button(ui, "Export", Btn::Quiet).clicked() {
+                            self.export_current();
+                        }
+                        if chrome::button(ui, "Refresh", Btn::Quiet).clicked() {
+                            self.refresh_current();
+                        }
+                    }
+                    page if page.catalog().is_some()
+                        && chrome::button(ui, "Refresh", Btn::Quiet).clicked() =>
+                    {
+                        self.refresh_current();
+                    }
+                    _ => {}
+                }
+            });
+        });
+        ui.add_space(14.0);
+        if let Some(msg) = &self.status_msg.clone() {
+            chrome::banner(ui, msg, false);
+            ui.add_space(8.0);
+        }
+        if let Some(err) = &self.list_error.clone() {
+            error_banner(ui, err);
+            ui.add_space(8.0);
+        }
+    }
+
+    fn ui_login(&mut self, ctx: &egui::Context) {
+        let p = chrome::colors(ctx.style().visuals.dark_mode);
+        let side = chrome::colors(true);
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(p.canvas))
+            .show(ctx, |ui| {
+                let full = ui.available_rect_before_wrap();
+                let split = (full.width() * 0.42).clamp(420.0, 560.0);
+                let left = egui::Rect::from_min_size(full.min, egui::vec2(split, full.height()));
+                ui.painter().rect_filled(left, egui::Rounding::ZERO, side.sidebar);
+                let mut brand = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt("login-brand")
+                        .max_rect(left.shrink(48.0)),
+                );
+                brand.add_space(36.0);
+                brand.label(chrome::semi("QUALITY CONTROL", 12.0, side.teal).extra_letter_spacing(1.2));
+                brand.add_space(16.0);
+                brand.label(chrome::semi("Cattle gear\nand hearth.", 40.0, side.sidebar_ink));
+                brand.add_space(16.0);
+                brand.label(
+                    egui::RichText::new(
+                        "Squeeze chutes, corral gates, panels, wood stoves, and fireplaces. The checks for those builds live here.",
+                    )
+                    .size(15.0)
+                    .color(side.sidebar_muted),
+                );
+
+                let right = egui::Rect::from_min_max(
+                    egui::pos2(left.right(), full.top()),
+                    full.max,
+                );
+                let mut pane = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt("login-pane")
+                        .max_rect(right),
+                );
+                let card_w = 400.0;
+                let card_h = 460.0;
+                pane.add_space(((right.height() - card_h) / 2.0).max(24.0));
+                pane.horizontal(|ui| {
+                    ui.add_space(((right.width() - card_w) / 2.0).max(24.0));
+                    ui.allocate_ui(egui::vec2(card_w, card_h), |ui| {
+                    chrome::surface(ui, "login-card", card_h, |ui| {
+                        ui.label(chrome::semi("Sign in", 24.0, p.ink));
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("Use the app account, not the database login.")
+                                .color(p.muted)
+                                .size(13.0),
+                        );
+                        ui.add_space(18.0);
+                        chrome::field_label(ui, "Server");
+                        chrome::text_line(ui, &mut self.settings.server_url);
+                        ui.add_space(10.0);
+                        chrome::field_label(ui, "Username");
+                        chrome::text_line(ui, &mut self.login.username);
+                        ui.add_space(10.0);
+                        chrome::field_label(ui, "Password");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.login.password)
+                                .password(true)
+                                .desired_width(f32::INFINITY)
+                                .margin(egui::Margin::symmetric(10.0, 8.0)),
+                        );
+                        ui.add_space(18.0);
+                        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        let clicked = ui
+                            .add_enabled_ui(!self.loading, |ui| {
+                                chrome::button_fill(ui, "Sign in", Btn::Primary).clicked()
+                            })
+                            .inner;
+                        if (clicked || enter)
+                            && !self.loading
+                            && !self.login.username.is_empty()
+                            && !self.login.password.is_empty()
+                        {
+                            self.client.set_base_url(self.settings.server_url.clone());
+                            let _ = self.settings.save();
+                            self.spawn_login();
+                        }
+                        if self.loading {
+                            ui.add_space(10.0);
+                            loading_spinner(ui);
+                        }
+                        if let Some(err) = &self.login.error {
+                            ui.add_space(10.0);
+                            error_banner(ui, err);
+                        }
+                    });
+                    });
+                });
+            });
     }
 
     fn ui_dashboard(&mut self, ui: &mut egui::Ui) {
@@ -1109,165 +1796,157 @@ impl QcApp {
             return;
         }
         let Some(d) = self.dashboard.clone() else {
-            empty_state(ui, "No dashboard data yet.", "Refresh to load plant stats.");
+            empty_state(ui, "The bench is empty.", "Refresh once the API is signed in.");
             return;
         };
-        ui.add_space(4.0);
-        ui.label("Key quality-control metrics for the plant.");
-        ui.add_space(12.0);
-        egui::Grid::new("dash_grid")
-            .num_columns(3)
-            .spacing([16.0, 16.0])
-            .show(ui, |ui| {
-                metric(ui, "Open inspections", d.open_inspections);
-                metric(ui, "Lots on hold", d.lots_on_hold);
-                metric(ui, "Open NCRs", d.open_nonconformances);
-                metric(ui, "Open CAPAs", d.open_corrective_actions);
-                metric(ui, "Overdue CAPAs", d.overdue_corrective_actions);
-                metric(ui, "Inspections (30d)", d.inspections_last_30_days);
-                metric(ui, "Pass (30d)", d.pass_last_30_days);
-                metric(ui, "Fail (30d)", d.fail_last_30_days);
-                metric(ui, "Conditional (30d)", d.conditional_last_30_days);
-            });
-        ui.add_space(16.0);
-        if let Some(rate) = d.pass_rate_last_30_days {
-            ui.label(format!("Pass rate (30d): {:.1}%", rate * 100.0));
-        } else {
-            ui.label("Pass rate (30d): —");
-        }
-        if !d.defects_by_severity.is_empty() {
-            ui.add_space(8.0);
-            ui.strong("Defects by severity");
-            for s in &d.defects_by_severity {
-                ui.label(format!("{}: {}", s.severity, s.count));
+        let lots = self.lots.clone();
+        let ncrs = self.floor_ncrs.clone();
+        if let Some(action) = bench::draw_today(ui, &d, &lots, &ncrs) {
+            match action {
+                bench::BenchAction::Inspect(id) => {
+                    self.insp_form.lot_id = id.to_string();
+                    self.goto(NavPage::Inspections);
+                    self.form = FormMode::CreateInspection;
+                }
+                bench::BenchAction::Alerts => self.goto(NavPage::Nonconformances),
+                bench::BenchAction::NewLot => self.goto(NavPage::Lots),
+                bench::BenchAction::NewCheck => {
+                    self.goto(NavPage::Inspections);
+                    self.form = FormMode::CreateInspection;
+                }
+                bench::BenchAction::OpenNcr(id) => self.show_detail(DetailView::Ncr(id)),
             }
         }
     }
 
     fn ui_inspections(&mut self, ui: &mut egui::Ui) {
-        self.ui_toolbar(ui, &["", "in_progress", "completed", "cancelled"]);
         if matches!(self.form, FormMode::CreateInspection) {
             self.ui_inspection_form(ui);
-            ui.separator();
         }
         if let DetailView::Inspection(_) = self.detail {
             self.ui_inspection_detail(ui);
             return;
         }
+        self.ui_toolbar(ui, &["", "in_progress", "completed", "cancelled"]);
         let rows: Vec<Inspection> = self.filtered_inspections().into_iter().cloned().collect();
         if !self.loading && rows.is_empty() {
             empty_state(
                 ui,
                 "No inspections match.",
-                "Adjust search/filter or create a new inspection (Ctrl/Cmd+N).",
+                "Change the filter, or start a check with New inspection.",
             );
             return;
         }
-        egui::ScrollArea::both().show(ui, |ui| {
-            egui::Grid::new("insp_table")
-                .striped(true)
-                .min_col_width(90.0)
-                .show(ui, |ui| {
-                    if ui.button("Number").clicked() {
-                        self.toggle_sort(SortKey::Number);
+        if let Some(title) = record_table(
+            ui,
+            &["Number", "Build", "Status", "Result", "Started", ""],
+            rows.len(),
+            |ui, idx, col| match col {
+                0 => {
+                    ui.label(&rows[idx].inspection_number);
+                }
+                1 => {
+                    let build = self
+                        .lots
+                        .iter()
+                        .find(|l| l.id == rows[idx].lot_id)
+                        .map(|l| {
+                            let product = self
+                                .products
+                                .iter()
+                                .find(|p| p.id == l.product_id)
+                                .map(|p| p.name.as_str())
+                                .unwrap_or("");
+                            format!("{}  {}", l.lot_number, product)
+                        })
+                        .unwrap_or_default();
+                    ui.add(egui::Label::new(build).truncate());
+                }
+                2 => status_badge(ui, &rows[idx].status),
+                3 => status_badge(ui, &rows[idx].result),
+                4 => {
+                    ui.label(rows[idx].started_at.with_timezone(&chrono::Local).format("%b %-d, %H:%M").to_string());
+                }
+                _ => {
+                    let label = if rows[idx].status == "in_progress" { "Continue" } else { "Open" };
+                    if quiet_button(ui, label).clicked() {
+                        self.show_detail(DetailView::Inspection(rows[idx].id));
                     }
-                    if ui.button("Status").clicked() {
-                        self.toggle_sort(SortKey::Status);
-                    }
-                    if ui.button("Result").clicked() {
-                        self.toggle_sort(SortKey::Result);
-                    }
-                    if ui.button("Started").clicked() {
-                        self.toggle_sort(SortKey::Opened);
-                    }
-                    ui.label("Sample");
-                    ui.label("");
-                    ui.end_row();
-                    for r in &rows {
-                        ui.label(&r.inspection_number);
-                        status_badge(ui, &r.status);
-                        status_badge(ui, &r.result);
-                        ui.label(r.started_at.format("%Y-%m-%d %H:%M").to_string());
-                        ui.label(r.sample_size.to_string());
-                        if ui.button("Open").clicked() {
-                            let id = r.id;
-                            self.detail = DetailView::Inspection(id);
-                            self.spawn_detail(DetailView::Inspection(id));
-                        }
-                        ui.end_row();
-                    }
-                });
-        });
+                }
+            },
+        ) {
+            if let Some(key) = column_sort(&title) {
+                self.toggle_sort(key);
+            }
+        }
     }
 
     fn ui_ncrs(&mut self, ui: &mut egui::Ui) {
-        self.ui_toolbar(
-            ui,
-            &["", "open", "under_review", "dispositioned", "closed", "void"],
-        );
         if matches!(self.form, FormMode::CreateNcr | FormMode::EditNcr(_)) {
             self.ui_ncr_form(ui);
-            ui.separator();
         }
         if let DetailView::Ncr(_) = self.detail {
             self.ui_ncr_detail(ui);
             return;
         }
+        self.ui_toolbar(
+            ui,
+            &["", "open", "under_review", "dispositioned", "closed", "void"],
+        );
         let rows: Vec<Nonconformance> = self.filtered_ncrs().into_iter().cloned().collect();
         if !self.loading && rows.is_empty() {
             empty_state(
                 ui,
-                "No nonconformances match.",
-                "Create an NCR with Ctrl/Cmd+N.",
+                "No alerts match.",
+                "Change the filter, or create one with New alert.",
             );
             return;
         }
-        egui::ScrollArea::both().show(ui, |ui| {
-            egui::Grid::new("ncr_table")
-                .striped(true)
-                .min_col_width(90.0)
-                .show(ui, |ui| {
-                    if ui.button("Number").clicked() {
-                        self.toggle_sort(SortKey::Number);
-                    }
-                    if ui.button("Title").clicked() {
-                        self.toggle_sort(SortKey::Title);
-                    }
-                    if ui.button("Severity").clicked() {
-                        self.toggle_sort(SortKey::Severity);
-                    }
-                    if ui.button("Status").clicked() {
-                        self.toggle_sort(SortKey::Status);
-                    }
-                    ui.label("");
-                    ui.end_row();
-                    for r in &rows {
-                        ui.label(&r.ncr_number);
-                        ui.label(&r.title);
-                        status_badge(ui, &r.severity);
-                        status_badge(ui, &r.status);
-                        ui.horizontal(|ui| {
-                            if ui.button("Open").clicked() {
-                                let id = r.id;
-                                self.detail = DetailView::Ncr(id);
-                                self.spawn_detail(DetailView::Ncr(id));
-                            }
-                            if ui.button("Edit").clicked() {
-                                self.ncr_form.product_id = r.product_id.to_string();
-                                self.ncr_form.title = r.title.clone();
-                                self.ncr_form.description = r.description.clone();
-                                self.ncr_form.severity = r.severity.clone();
-                                self.ncr_form.quantity = r.quantity_affected.to_string();
-                                self.form = FormMode::EditNcr(r.id);
-                            }
-                        });
-                        ui.end_row();
-                    }
-                });
-        });
+        if let Some(title) = record_table(
+            ui,
+            &["Number", "Title", "Severity", "Status", ""],
+            rows.len(),
+            |ui, idx, col| match col {
+                0 => {
+                    ui.label(&rows[idx].ncr_number);
+                }
+                1 => {
+                    ui.label(&rows[idx].title);
+                }
+                2 => status_badge(ui, &rows[idx].severity),
+                3 => status_badge(ui, &rows[idx].status),
+                _ => {
+                    ui.horizontal(|ui| {
+                        if quiet_button(ui, "Open").clicked() {
+                            self.show_detail(DetailView::Ncr(rows[idx].id));
+                        }
+                        let editable = matches!(rows[idx].status.as_str(), "open" | "under_review" | "dispositioned");
+                        if editable && quiet_button(ui, "Edit").clicked() {
+                            self.ncr_form.product_id = rows[idx].product_id.to_string();
+                            self.ncr_form.title = rows[idx].title.clone();
+                            self.ncr_form.description = rows[idx].description.clone();
+                            self.ncr_form.severity = rows[idx].severity.clone();
+                            self.ncr_form.quantity = rows[idx].quantity_affected.to_string();
+                            self.form = FormMode::EditNcr(rows[idx].id);
+                        }
+                    });
+                }
+            },
+        ) {
+            if let Some(key) = column_sort(&title) {
+                self.toggle_sort(key);
+            }
+        }
     }
 
     fn ui_capas(&mut self, ui: &mut egui::Ui) {
+        if matches!(self.form, FormMode::CreateCapa | FormMode::EditCapa(_)) {
+            self.ui_capa_form(ui);
+        }
+        if let DetailView::Capa(_) = self.detail {
+            self.ui_capa_detail(ui);
+            return;
+        }
         self.ui_toolbar(
             ui,
             &[
@@ -1279,105 +1958,117 @@ impl QcApp {
                 "cancelled",
             ],
         );
-        if matches!(self.form, FormMode::CreateCapa | FormMode::EditCapa(_)) {
-            self.ui_capa_form(ui);
-            ui.separator();
-        }
-        if let DetailView::Capa(_) = self.detail {
-            self.ui_capa_detail(ui);
-            return;
-        }
         let rows: Vec<CorrectiveAction> = self.filtered_capas().into_iter().cloned().collect();
         if !self.loading && rows.is_empty() {
             empty_state(
                 ui,
-                "No corrective actions match.",
-                "Create a CAPA with Ctrl/Cmd+N.",
+                "No actions match.",
+                "Change the filter, or create one with New action.",
             );
             return;
         }
-        egui::ScrollArea::both().show(ui, |ui| {
-            egui::Grid::new("capa_table")
-                .striped(true)
-                .min_col_width(90.0)
-                .show(ui, |ui| {
-                    if ui.button("Number").clicked() {
-                        self.toggle_sort(SortKey::Number);
-                    }
-                    if ui.button("Title").clicked() {
-                        self.toggle_sort(SortKey::Title);
-                    }
-                    if ui.button("Status").clicked() {
-                        self.toggle_sort(SortKey::Status);
-                    }
-                    if ui.button("Due").clicked() {
-                        self.toggle_sort(SortKey::Due);
-                    }
-                    ui.label("");
-                    ui.end_row();
-                    for r in &rows {
-                        ui.label(&r.ca_number);
-                        ui.label(&r.title);
-                        status_badge(ui, &r.status);
-                        ui.label(&r.due_date);
-                        ui.horizontal(|ui| {
-                            if ui.button("Open").clicked() {
-                                let id = r.id;
-                                self.detail = DetailView::Capa(id);
-                                self.spawn_detail(DetailView::Capa(id));
-                            }
-                            if ui.button("Edit").clicked() {
-                                self.capa_form.title = r.title.clone();
-                                self.capa_form.root_cause = r.root_cause.clone();
-                                self.capa_form.action_plan = r.action_plan.clone();
-                                self.capa_form.due_date = r.due_date.clone();
-                                self.form = FormMode::EditCapa(r.id);
-                            }
-                        });
-                        ui.end_row();
-                    }
-                });
-        });
+        if let Some(title) = record_table(
+            ui,
+            &["Number", "Title", "Status", "Due", ""],
+            rows.len(),
+            |ui, idx, col| match col {
+                0 => {
+                    ui.label(&rows[idx].ca_number);
+                }
+                1 => {
+                    ui.label(&rows[idx].title);
+                }
+                2 => status_badge(ui, &rows[idx].status),
+                3 => {
+                    ui.label(&rows[idx].due_date);
+                }
+                _ => {
+                    ui.horizontal(|ui| {
+                        if quiet_button(ui, "Open").clicked() {
+                            self.show_detail(DetailView::Capa(rows[idx].id));
+                        }
+                        let editable = matches!(rows[idx].status.as_str(), "open" | "in_progress" | "verification");
+                        if editable && quiet_button(ui, "Edit").clicked() {
+                            self.capa_form.title = rows[idx].title.clone();
+                            self.capa_form.root_cause = rows[idx].root_cause.clone();
+                            self.capa_form.action_plan = rows[idx].action_plan.clone();
+                            self.capa_form.due_date = rows[idx].due_date.clone();
+                            self.form = FormMode::EditCapa(rows[idx].id);
+                        }
+                    });
+                }
+            },
+        ) {
+            if let Some(key) = column_sort(&title) {
+                self.toggle_sort(key);
+            }
+        }
     }
 
     fn ui_settings(&mut self, ui: &mut egui::Ui) {
-        ui.label("Server connection and appearance. Changes are saved on disk.");
-        ui.add_space(8.0);
-        ui.label("Server URL");
-        ui.text_edit_singleline(&mut self.settings.server_url);
-        ui.add_space(8.0);
-        ui.label("Theme");
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut self.settings.theme, ThemePreference::Light, "Light");
-            ui.radio_value(&mut self.settings.theme, ThemePreference::Dark, "Dark");
-            ui.radio_value(&mut self.settings.theme, ThemePreference::System, "System");
-        });
-        ui.add_space(8.0);
-        if ui.button("Save settings").clicked() {
-            self.client.set_base_url(self.settings.server_url.clone());
-            match self.settings.save() {
-                Ok(()) => {
-                    self.status_msg = Some(format!("Saved to {}", AppSettings::path_display()))
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            chrome::form_card(ui, "Connection", |ui| {
+                chrome::field_label(ui, "Server URL");
+                chrome::text_line(ui, &mut self.settings.server_url);
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(
+                        "The app talks to this address. The database port is not this address.",
+                    )
+                    .color(chrome::palette(ui).muted)
+                    .size(12.5),
+                );
+            });
+            ui.add_space(12.0);
+            chrome::form_card(ui, "Appearance", |ui| {
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut self.settings.theme, ThemePreference::Light, "Light");
+                    ui.radio_value(&mut self.settings.theme, ThemePreference::Dark, "Dark");
+                    ui.radio_value(&mut self.settings.theme, ThemePreference::System, "System");
+                });
+            });
+            ui.add_space(12.0);
+            if chrome::button(ui, "Save settings", Btn::Primary).clicked() {
+                self.client.set_base_url(self.settings.server_url.clone());
+                match self.settings.save() {
+                    Ok(()) => {
+                        self.status_msg = Some(format!("Saved to {}", AppSettings::path_display()))
+                    }
+                    Err(e) => self.list_error = Some(e),
                 }
-                Err(e) => self.list_error = Some(e),
             }
-        }
-        ui.add_space(12.0);
-        ui.label(format!("Settings file: {}", AppSettings::path_display()));
-        if let Some(s) = &self.session {
-            ui.label(format!(
-                "Signed in as {} ({})",
-                s.user.username, s.user.role
-            ));
-        }
-        ui.add_space(12.0);
-        ui.collapsing("Keyboard shortcuts", |ui| {
-            ui.label("Ctrl/Cmd+1…5 — navigate sections");
-            ui.label("Ctrl/Cmd+R — refresh");
-            ui.label("Ctrl/Cmd+N — new record on list pages");
-            ui.label("Ctrl/Cmd+, — settings");
-            ui.label("Esc — close detail/form");
-            ui.label("Enter — submit login");
+            ui.add_space(12.0);
+            chrome::form_card(ui, "This desk", |ui| {
+                let p = chrome::palette(ui);
+                ui.label(
+                    egui::RichText::new(format!("Settings file  {}", AppSettings::path_display()))
+                        .color(p.muted)
+                        .size(13.0),
+                );
+                if let Some(s) = &self.session {
+                    ui.add_space(6.0);
+                    ui.label(chrome::semi(
+                        format!("{}  ·  {}", s.user.full_name, s.user.role.replace('_', " ")),
+                        14.0,
+                        p.ink,
+                    ));
+                    ui.label(egui::RichText::new(&s.user.username).color(p.muted).size(13.0));
+                }
+            });
+            ui.add_space(12.0);
+            chrome::form_card(ui, "Shortcuts", |ui| {
+                let p = chrome::palette(ui);
+                let m = if cfg!(target_os = "macos") { "⌘" } else { "Ctrl+" };
+                for line in [
+                    format!("{m}1 to {m}5    Floor, inspections, alerts, actions, settings"),
+                    format!("{m}R    Refresh the page you are on"),
+                    format!("{m}N    New record on a list"),
+                    format!("{m},    Settings"),
+                    "Esc    Close a form or a detail".to_string(),
+                ] {
+                    ui.label(egui::RichText::new(line).color(p.ink).size(13.5));
+                }
+            });
         });
     }
 
@@ -1408,63 +2099,80 @@ impl QcApp {
     }
 
     fn ui_inspection_form(&mut self, ui: &mut egui::Ui) {
-        ui.group(|ui| {
-            ui.strong("New inspection");
-            ui.label("Lot ID (UUID)");
-            if !self.lots.is_empty() {
+        chrome::form_card(ui, "New inspection", |ui| {
+            chrome::field_label(ui, "Build (lot)");
+            let products = &self.products;
+            let lot_label = |l: &Lot| {
+                let product = products
+                    .iter()
+                    .find(|p| p.id == l.product_id)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("");
+                format!("{}  {}  ({})", l.lot_number, product, l.status.replace('_', " "))
+            };
+            if self.lots.iter().all(|l| matches!(l.status.as_str(), "closed" | "on_hold")) {
+                chrome::muted(ui, "No lots ready to inspect. Add one on the Lots page, or release a hold.");
+            } else {
                 egui::ComboBox::from_id_salt("lot_pick")
-                    .selected_text(if self.insp_form.lot_id.is_empty() {
-                        "Select lot".to_string()
-                    } else {
+                    .width(ui.available_width())
+                    .height(360.0)
+                    .selected_text(
                         self.lots
                             .iter()
                             .find(|l| l.id.to_string() == self.insp_form.lot_id)
-                            .map(|l| l.lot_number.clone())
-                            .unwrap_or_else(|| self.insp_form.lot_id.clone())
-                    })
+                            .map(lot_label)
+                            .unwrap_or_else(|| "Pick the build to check".to_string()),
+                    )
                     .show_ui(ui, |ui| {
-                        for lot in &self.lots {
+                        for lot in self.lots.iter().filter(|l| !matches!(l.status.as_str(), "closed" | "on_hold")) {
                             if ui
-                                .selectable_label(
-                                    self.insp_form.lot_id == lot.id.to_string(),
-                                    format!("{} ({})", lot.lot_number, lot.status),
-                                )
+                                .selectable_label(self.insp_form.lot_id == lot.id.to_string(), lot_label(lot))
                                 .clicked()
                             {
                                 self.insp_form.lot_id = lot.id.to_string();
                             }
                         }
                     });
+                ui.add_space(4.0);
+                chrome::muted(ui, "The product's active plan sets the checks.");
             }
-            ui.text_edit_singleline(&mut self.insp_form.lot_id);
-            ui.label("Notes");
-            ui.text_edit_multiline(&mut self.insp_form.notes);
+            ui.add_space(8.0);
+            chrome::field_label(ui, "Notes");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.insp_form.notes)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3),
+            );
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Create").clicked() {
+                if chrome::button(ui, "Create", Btn::Primary).clicked() {
                     self.submit_inspection();
                 }
-                if ui.button("Cancel").clicked() {
+                if chrome::button(ui, "Cancel", Btn::Quiet).clicked() {
                     self.form = FormMode::None;
                 }
             });
             if let Some(err) = &self.insp_form.error {
-                ui.colored_label(egui::Color32::from_rgb(200, 60, 60), err);
+                ui.add_space(8.0);
+                error_banner(ui, err);
             }
         });
+        ui.add_space(12.0);
     }
 
     fn ui_ncr_form(&mut self, ui: &mut egui::Ui) {
-        ui.group(|ui| {
-            ui.strong(if matches!(self.form, FormMode::EditNcr(_)) {
-                "Edit nonconformance"
-            } else {
-                "New nonconformance"
-            });
-            ui.label("Product ID (UUID)");
+        let title = if matches!(self.form, FormMode::EditNcr(_)) {
+            "Edit alert"
+        } else {
+            "New alert"
+        };
+        chrome::form_card(ui, title, |ui| {
+            chrome::field_label(ui, "Product");
             if !self.products.is_empty() {
                 egui::ComboBox::from_id_salt("product_pick")
+                    .width(ui.available_width())
                     .selected_text(if self.ncr_form.product_id.is_empty() {
-                        "Select product".to_string()
+                        "Select a product".to_string()
                     } else {
                         self.products
                             .iter()
@@ -1485,164 +2193,141 @@ impl QcApp {
                             }
                         }
                     });
+                ui.add_space(8.0);
             }
-            ui.text_edit_singleline(&mut self.ncr_form.product_id);
-            ui.label("Title");
-            ui.text_edit_singleline(&mut self.ncr_form.title);
-            ui.label("Description");
-            ui.text_edit_multiline(&mut self.ncr_form.description);
+            chrome::field_label(ui, "Title");
+            chrome::text_line(ui, &mut self.ncr_form.title);
+            ui.add_space(8.0);
+            chrome::field_label(ui, "Description");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.ncr_form.description)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3),
+            );
+            ui.add_space(8.0);
+            chrome::field_label(ui, "Severity");
             ui.horizontal(|ui| {
-                ui.label("Severity");
                 for s in ["minor", "major", "critical"] {
                     ui.radio_value(&mut self.ncr_form.severity, s.to_string(), s);
                 }
             });
-            ui.label("Quantity affected");
-            ui.text_edit_singleline(&mut self.ncr_form.quantity);
+            ui.add_space(8.0);
+            chrome::field_label(ui, "Quantity affected");
+            chrome::text_line(ui, &mut self.ncr_form.quantity);
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
+                if chrome::button(ui, "Save", Btn::Primary).clicked() {
                     self.submit_ncr();
                 }
-                if ui.button("Cancel").clicked() {
+                if chrome::button(ui, "Cancel", Btn::Quiet).clicked() {
                     self.form = FormMode::None;
                 }
             });
             if let Some(err) = &self.ncr_form.error {
-                ui.colored_label(egui::Color32::from_rgb(200, 60, 60), err);
+                ui.add_space(8.0);
+                error_banner(ui, err);
             }
         });
+        ui.add_space(12.0);
     }
 
     fn ui_capa_form(&mut self, ui: &mut egui::Ui) {
-        ui.group(|ui| {
-            ui.strong(if matches!(self.form, FormMode::EditCapa(_)) {
-                "Edit corrective action"
-            } else {
-                "New corrective action"
-            });
-            ui.label("Title");
-            ui.text_edit_singleline(&mut self.capa_form.title);
-            ui.label("Root cause");
-            ui.text_edit_multiline(&mut self.capa_form.root_cause);
-            ui.label("Action plan");
-            ui.text_edit_multiline(&mut self.capa_form.action_plan);
-            ui.label("Due date (YYYY-MM-DD)");
-            ui.text_edit_singleline(&mut self.capa_form.due_date);
+        let title = if matches!(self.form, FormMode::EditCapa(_)) {
+            "Edit action"
+        } else {
+            "New action"
+        };
+        chrome::form_card(ui, title, |ui| {
+            if let Some((_, number)) = &self.capa_form.ncr {
+                chrome::muted(ui, format!("For alert {number}"));
+                ui.add_space(6.0);
+            }
+            chrome::field_label(ui, "Title");
+            chrome::text_line(ui, &mut self.capa_form.title);
+            ui.add_space(8.0);
+            chrome::field_label(ui, "Root cause");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.capa_form.root_cause)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3),
+            );
+            ui.add_space(8.0);
+            chrome::field_label(ui, "Action plan");
+            ui.add(
+                egui::TextEdit::multiline(&mut self.capa_form.action_plan)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3),
+            );
+            ui.add_space(8.0);
+            chrome::field_label(ui, "Due date");
+            chrome::text_line(ui, &mut self.capa_form.due_date);
+            ui.add_space(12.0);
             ui.horizontal(|ui| {
-                if ui.button("Save").clicked() {
+                if chrome::button(ui, "Save", Btn::Primary).clicked() {
                     self.submit_capa();
                 }
-                if ui.button("Cancel").clicked() {
+                if chrome::button(ui, "Cancel", Btn::Quiet).clicked() {
                     self.form = FormMode::None;
+                    self.capa_form.ncr = None;
                 }
             });
             if let Some(err) = &self.capa_form.error {
-                ui.colored_label(egui::Color32::from_rgb(200, 60, 60), err);
+                ui.add_space(8.0);
+                error_banner(ui, err);
             }
         });
+        ui.add_space(12.0);
     }
 
-    fn ui_inspection_detail(&mut self, ui: &mut egui::Ui) {
-        if ui.button("← Back").clicked() {
-            self.detail = DetailView::None;
-            self.inspection_detail = None;
-            return;
-        }
-        if self.loading && self.inspection_detail.is_none() {
-            loading_spinner(ui);
-            return;
-        }
-        let Some(d) = &self.inspection_detail else {
-            empty_state(ui, "Inspection not loaded.", "Go back and try again.");
-            return;
-        };
-        ui.heading(&d.inspection.inspection_number);
-        ui.label(format!(
-            "Status: {} · Result: {}",
-            d.inspection.status, d.inspection.result
-        ));
-        ui.label(format!("Lot: {}", d.inspection.lot_id));
-        ui.label(format!("Notes: {}", d.inspection.notes));
-        ui.separator();
-        ui.strong(format!("Results ({})", d.results.len()));
-        for r in &d.results {
-            ui.label(format!(
-                "{} [{}] in_spec={} value={:?}",
-                r.characteristic_code, r.sample_index, r.in_spec, r.measured_value
-            ));
-        }
-        ui.strong(format!("Defects ({})", d.defects.len()));
-        for def in &d.defects {
-            ui.label(format!(
-                "{} {} qty={}",
-                def.code, def.severity, def.quantity
-            ));
-        }
-        if !d.missing_characteristics.is_empty() {
-            ui.colored_label(
-                egui::Color32::from_rgb(180, 120, 40),
-                format!("Missing: {}", d.missing_characteristics.join(", ")),
-            );
-        }
-    }
+}
 
-    fn ui_ncr_detail(&mut self, ui: &mut egui::Ui) {
-        if ui.button("← Back").clicked() {
-            self.detail = DetailView::None;
-            self.ncr_detail = None;
-            return;
-        }
-        if self.loading && self.ncr_detail.is_none() {
-            loading_spinner(ui);
-            return;
-        }
-        let Some(d) = &self.ncr_detail else {
-            empty_state(ui, "NCR not loaded.", "Go back and try again.");
-            return;
-        };
-        ui.heading(&d.ncr.ncr_number);
-        ui.label(&d.ncr.title);
-        ui.label(format!(
-            "{} · {} · disposition {}",
-            d.ncr.severity, d.ncr.status, d.ncr.disposition
-        ));
-        ui.label(&d.ncr.description);
-        ui.separator();
-        ui.strong(format!("Linked CAPAs ({})", d.corrective_actions.len()));
-        for c in &d.corrective_actions {
-            ui.label(format!("{} — {} ({})", c.ca_number, c.title, c.status));
-        }
-    }
-
-    fn ui_capa_detail(&mut self, ui: &mut egui::Ui) {
-        if ui.button("← Back").clicked() {
-            self.detail = DetailView::None;
-            self.capa_detail = None;
-            return;
-        }
-        if self.loading && self.capa_detail.is_none() {
-            loading_spinner(ui);
-            return;
-        }
-        let Some(d) = &self.capa_detail else {
-            empty_state(ui, "CAPA not loaded.", "Go back and try again.");
-            return;
-        };
-        ui.heading(&d.ca_number);
-        ui.label(&d.title);
-        ui.label(format!("Status: {} · Due: {}", d.status, d.due_date));
-        ui.label(format!("Root cause: {}", d.root_cause));
-        ui.label(format!("Action plan: {}", d.action_plan));
-        if !d.verification_notes.is_empty() {
-            ui.label(format!("Verification: {}", d.verification_notes));
-        }
+fn column_sort(title: &str) -> Option<SortKey> {
+    match title {
+        "Number" => Some(SortKey::Number),
+        "Status" => Some(SortKey::Status),
+        "Result" => Some(SortKey::Result),
+        "Started" => Some(SortKey::Opened),
+        "Title" => Some(SortKey::Title),
+        "Severity" => Some(SortKey::Severity),
+        "Due" => Some(SortKey::Due),
+        _ => None,
     }
 }
 
-fn metric(ui: &mut egui::Ui, label: &str, value: i32) {
-    ui.group(|ui| {
-        ui.set_min_width(160.0);
-        ui.label(egui::RichText::new(label).weak());
-        ui.heading(value.to_string());
-    });
+fn record_table(
+    ui: &mut egui::Ui,
+    headers: &[&str],
+    len: usize,
+    mut draw: impl FnMut(&mut egui::Ui, usize, usize),
+) -> Option<String> {
+    use egui_extras::{Column, TableBuilder};
+    let p = chrome::palette(ui);
+    let mut clicked = None;
+    TableBuilder::new(ui)
+        .striped(true)
+        .resizable(true)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .columns(Column::remainder().at_least(88.0), headers.len())
+        .header(32.0, |mut header| {
+            for title in headers {
+                header.col(|ui| {
+                    let response = ui.add(
+                        egui::Label::new(chrome::semi(*title, 12.0, p.muted))
+                            .sense(egui::Sense::click()),
+                    );
+                    if response.clicked() {
+                        clicked = Some((*title).to_string());
+                    }
+                });
+            }
+        })
+        .body(|body| {
+            body.rows(42.0, len, |mut row| {
+                let idx = row.index();
+                for col in 0..headers.len() {
+                    row.col(|ui| draw(ui, idx, col));
+                }
+            });
+        });
+    clicked
 }

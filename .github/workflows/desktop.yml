@@ -142,3 +142,23 @@ jobs:
       - name: Release build
         working-directory: desktop
         run: cargo build --release
+
+  build-windows:
+    name: Build (windows-latest)
+    runs-on: windows-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: Release build
+        working-directory: desktop
+        run: cargo build --release

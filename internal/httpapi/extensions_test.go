@@ -89,6 +89,16 @@ func TestExtensionsFlow(t *testing.T) {
 	if seed.InspectionID == uuid.Nil || seed.ChecklistID == uuid.Nil {
 		t.Fatalf("seed incomplete: %+v", seed)
 	}
+	var again domain.DemoSeedResult
+	api.call(t, http.MethodPost, "/api/v1/admin/seed-demo", map[string]any{}, &again, http.StatusCreated)
+	if again.LotID != seed.LotID || again.InspectionID != seed.InspectionID || again.ChecklistID != seed.ChecklistID {
+		t.Fatalf("second seed created new rows: first %+v second %+v", seed, again)
+	}
+	var products []domain.Product
+	api.call(t, http.MethodGet, "/api/v1/products?limit=200", nil, &products, http.StatusOK)
+	if len(products) != 5 {
+		t.Fatalf("want 5 shop products after two seeds, got %d", len(products))
+	}
 
 	var checklist domain.ChecklistDetail
 	api.call(t, http.MethodGet, "/api/v1/checklists/"+seed.ChecklistID.String(), nil, &checklist, http.StatusOK)
@@ -143,10 +153,53 @@ func TestExtensionsFlow(t *testing.T) {
 	}
 
 	var hits []domain.SearchHit
-	api.call(t, http.MethodGet, "/api/v1/search?q=DEMO", nil, &hits, http.StatusOK)
+	api.call(t, http.MethodGet, "/api/v1/search?q=CHUTE", nil, &hits, http.StatusOK)
 	if len(hits) == 0 {
 		t.Fatal("expected search hits")
 	}
+
+	var lot domain.Lot
+	api.call(t, http.MethodGet, "/api/v1/lots/"+seed.LotID.String(), nil, &lot, http.StatusOK)
+	var scanned []domain.SearchHit
+	api.call(t, http.MethodGet, "/api/v1/lookup?code="+strings.ToLower(lot.LotNumber), nil, &scanned, http.StatusOK)
+	if len(scanned) == 0 || scanned[0].EntityType != "lot" || scanned[0].ID != seed.LotID {
+		t.Fatalf("lookup %s: %+v", lot.LotNumber, scanned)
+	}
+	if body := string(api.raw(t, http.MethodDelete, "/api/v1/lots/"+seed.LotID.String(), nil, http.StatusConflict)); !strings.Contains(body, "inspections") {
+		t.Fatalf("deleting a used lot should name what uses it: %s", body)
+	}
+	notes := "re-checked by admin"
+	var edited domain.Inspection
+	api.call(t, http.MethodPatch, "/api/v1/inspections/"+seed.InspectionID.String(), domain.PatchInspection{Notes: &notes}, &edited, http.StatusOK)
+	if edited.Notes != notes {
+		t.Fatalf("inspection notes not saved: %q", edited.Notes)
+	}
+	var plan domain.PlanDetail
+	api.call(t, http.MethodGet, "/api/v1/plans/"+edited.PlanID.String(), nil, &plan, http.StatusOK)
+	if plan.Status != domain.PlanActive || len(plan.Characteristics) == 0 {
+		t.Fatalf("seed plan should be active with checks: %+v", plan.InspectionPlan)
+	}
+	planName := plan.Name + " (fixed)"
+	api.call(t, http.MethodPatch, "/api/v1/plans/"+plan.ID.String(), domain.PatchPlan{Name: &planName}, &domain.InspectionPlan{}, http.StatusOK)
+	first := plan.Characteristics[0]
+	checkName := first.Name + " (fixed)"
+	api.call(t, http.MethodPatch, "/api/v1/characteristics/"+first.ID.String(), domain.PatchCharacteristic{Name: &checkName}, &domain.Characteristic{}, http.StatusOK)
+	flipped := domain.CharAttribute
+	if first.CharacteristicType == domain.CharAttribute {
+		flipped = domain.CharVariable
+	}
+	api.raw(t, http.MethodPatch, "/api/v1/characteristics/"+first.ID.String(), domain.PatchCharacteristic{CharacteristicType: &flipped}, http.StatusUnprocessableEntity)
+	api.raw(t, http.MethodPost, "/api/v1/plans/"+plan.ID.String()+"/characteristics", domain.NewCharacteristic{
+		Sequence: 99, Code: "LATE", Name: "Late check", CharacteristicType: domain.CharAttribute,
+	}, http.StatusUnprocessableEntity)
+
+	var spare domain.Product
+	api.call(t, http.MethodPost, "/api/v1/products", domain.NewProduct{PartNumber: "SPARE-1", Name: "Spare"}, &spare, http.StatusCreated)
+	api.raw(t, http.MethodDelete, "/api/v1/products/"+spare.ID.String(), nil, http.StatusNoContent)
+	api.raw(t, http.MethodGet, "/api/v1/products/"+spare.ID.String(), nil, http.StatusNotFound)
+	var me domain.User
+	api.call(t, http.MethodGet, "/api/v1/me", nil, &me, http.StatusOK)
+	api.raw(t, http.MethodDelete, "/api/v1/users/"+me.ID.String(), nil, http.StatusUnprocessableEntity)
 
 	for _, path := range []string{
 		"/api/v1/reports/inspections.csv",

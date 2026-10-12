@@ -11,21 +11,11 @@ import (
 
 // InsertRequestAudit records one HTTP request. Best-effort callers ignore errors.
 func (s *Store) InsertRequestAudit(ctx context.Context, actorID *uuid.UUID, method, path string, status, durationMS int, ip, requestID, userAgent string) error {
-	if len(method) > 16 {
-		method = method[:16]
-	}
-	if len(path) > 512 {
-		path = path[:512]
-	}
-	if len(ip) > 80 {
-		ip = ip[:80]
-	}
-	if len(requestID) > 80 {
-		requestID = requestID[:80]
-	}
-	if len(userAgent) > 300 {
-		userAgent = userAgent[:300]
-	}
+	method = clip(method, 16)
+	path = clip(path, 512)
+	ip = clip(ip, 80)
+	requestID = clip(requestID, 80)
+	userAgent = clip(userAgent, 300)
 	if durationMS < 0 {
 		durationMS = 0
 	}

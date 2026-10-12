@@ -3,6 +3,7 @@
 pub mod api;
 pub mod app;
 pub mod csv_export;
+pub mod label;
 pub mod settings;
 
 pub use api::{ApiClient, ApiError};

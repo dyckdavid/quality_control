@@ -4,62 +4,30 @@ import SwiftUI
 import UIKit
 #endif
 
-/// Plant-floor design tokens: slate + teal + amber. Adaptive for light and dark mode.
+/// Shop design tokens, matched to the desktop app: teal for go, copper for the shop's own accent.
 enum QCTheme {
-    static let brandColor = Color(red: 0.07, green: 0.42, blue: 0.45)
-    static let brandDeep = Color(red: 0.04, green: 0.22, blue: 0.28)
-    static let brandSoft = Color(red: 0.16, green: 0.55, blue: 0.58)
-    static let amber = Color(red: 0.86, green: 0.52, blue: 0.14)
-    static let success = Color(red: 0.16, green: 0.58, blue: 0.36)
-    static let danger = Color(red: 0.76, green: 0.22, blue: 0.24)
-    static let info = Color(red: 0.18, green: 0.42, blue: 0.72)
+    static let brandColor = adaptive(light: (15, 110, 98), dark: (45, 168, 148))
+    static let brandDeep = adaptive(light: (10, 70, 63), dark: (18, 48, 44))
+    static let brandSoft = adaptive(light: (226, 242, 238), dark: (18, 48, 44))
+    static let copper = adaptive(light: (180, 62, 28), dark: (242, 125, 78))
+    static let copperSoft = adaptive(light: (252, 236, 228), dark: (58, 32, 24))
+    static let amber = adaptive(light: (161, 98, 7), dark: (232, 176, 74))
+    static let success = adaptive(light: (21, 128, 61), dark: (74, 196, 120))
+    static let danger = adaptive(light: (185, 28, 28), dark: (248, 113, 113))
+    static let info = adaptive(light: (37, 84, 158), dark: (126, 168, 232))
 
-    static var canvas: Color {
-        #if canImport(UIKit)
-        Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.07, green: 0.09, blue: 0.11, alpha: 1)
-                : UIColor(red: 0.94, green: 0.96, blue: 0.97, alpha: 1)
-        })
-        #else
-        Color(red: 0.94, green: 0.96, blue: 0.97)
-        #endif
+    static let canvas = adaptive(light: (244, 245, 247), dark: (14, 16, 20))
+    static let elevated = adaptive(light: (255, 255, 255), dark: (24, 27, 34))
+    static let line = adaptive(light: (226, 228, 233), dark: (46, 51, 61))
+    static let ink = adaptive(light: (17, 19, 24), dark: (244, 245, 247))
+    static let mutedInk = adaptive(light: (92, 99, 112), dark: (154, 160, 171))
+
+    static var brandGradient: LinearGradient {
+        LinearGradient(colors: [brandColor, brandDeep], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
-    static var elevated: Color {
-        #if canImport(UIKit)
-        Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.12, green: 0.15, blue: 0.18, alpha: 1)
-                : UIColor.white
-        })
-        #else
-        Color.white
-        #endif
-    }
-
-    static var ink: Color {
-        #if canImport(UIKit)
-        Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.93, green: 0.95, blue: 0.96, alpha: 1)
-                : UIColor(red: 0.10, green: 0.14, blue: 0.16, alpha: 1)
-        })
-        #else
-        Color(red: 0.10, green: 0.14, blue: 0.16)
-        #endif
-    }
-
-    static var mutedInk: Color {
-        #if canImport(UIKit)
-        Color(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.62, green: 0.68, blue: 0.72, alpha: 1)
-                : UIColor(red: 0.35, green: 0.42, blue: 0.45, alpha: 1)
-        })
-        #else
-        Color(red: 0.35, green: 0.42, blue: 0.45)
-        #endif
+    static var copperGradient: LinearGradient {
+        LinearGradient(colors: [copper, copper.opacity(0.75)], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     static let displayFont: Font = .system(.largeTitle, design: .rounded).weight(.bold)
@@ -78,46 +46,50 @@ enum QCTheme {
             amber
         case "in_progress", "in_inspection", "dispositioned", "open":
             info
-        case "minor", "draft":
-            mutedInk
         default:
             mutedInk
         }
+    }
+
+    private static func adaptive(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
+        #if canImport(UIKit)
+        Color(uiColor: UIColor { traits in
+            let c = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: c.0 / 255, green: c.1 / 255, blue: c.2 / 255, alpha: 1)
+        })
+        #else
+        Color(red: light.0 / 255, green: light.1 / 255, blue: light.2 / 255)
+        #endif
     }
 }
 
 struct QCBackground: View {
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
             QCTheme.canvas
             LinearGradient(
-                colors: [
-                    QCTheme.brandColor.opacity(0.14),
-                    Color.clear,
-                    QCTheme.brandDeep.opacity(0.08)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+                colors: [QCTheme.brandColor.opacity(0.10), .clear],
+                startPoint: .top,
+                endPoint: .center
             )
-            GeometryReader { geo in
-                Path { path in
-                    let step: CGFloat = 28
-                    var x: CGFloat = 0
-                    while x < geo.size.width {
-                        path.move(to: CGPoint(x: x, y: 0))
-                        path.addLine(to: CGPoint(x: x, y: geo.size.height))
-                        x += step
-                    }
-                    var y: CGFloat = 0
-                    while y < geo.size.height {
-                        path.move(to: CGPoint(x: 0, y: y))
-                        path.addLine(to: CGPoint(x: geo.size.width, y: y))
-                        y += step
-                    }
-                }
-                .stroke(QCTheme.brandColor.opacity(0.04), lineWidth: 1)
-            }
         }
         .ignoresSafeArea()
+    }
+}
+
+/// A rounded card on the canvas.
+struct QCCard<Content: View>: View {
+    var padding: CGFloat = 16
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(QCTheme.elevated, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(QCTheme.line, lineWidth: 1)
+            )
     }
 }

@@ -102,6 +102,25 @@ final class APIClient {
         return envelope.data
     }
 
+    /// The `data` member of a response as plain JSON, for screens that edit any table.
+    func json(method: String = "GET", _ path: String, query: [String: String] = [:], body: [String: Any]? = nil) async throws -> Any {
+        let rawBody = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+        let (data, response) = try await raw(
+            method: method,
+            path: path,
+            query: query,
+            body: rawBody,
+            contentType: rawBody == nil ? nil : "application/json",
+            authorized: true,
+            retry: true
+        )
+        guard !data.isEmpty else { return NSNull() }
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw APIFailure(status: response.statusCode, message: "The server response was not one this app understands.")
+        }
+        return object["data"] ?? NSNull()
+    }
+
     func download(id: UUID) async throws -> Data {
         let (data, _) = try await raw(method: "GET", path: "/api/v1/attachments/\(id.uuidString)", body: nil, contentType: nil, authorized: true, retry: true)
         return data

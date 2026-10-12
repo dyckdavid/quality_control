@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"quality_control/internal/store"
 )
@@ -30,6 +31,20 @@ func (s *Server) statsFilter(w http.ResponseWriter, r *http.Request) (store.Stat
 	limit, _, ok := queryPage(w, r)
 	if !ok {
 		return store.StatsFilter{}, false
+	}
+	if from != nil {
+		end := time.Now()
+		if to != nil {
+			end = *to
+		}
+		if !end.After(*from) {
+			writeError(w, http.StatusBadRequest, "invalid", "The end date must be after the start date.")
+			return store.StatsFilter{}, false
+		}
+		if end.Sub(*from) > 367*24*time.Hour {
+			writeError(w, http.StatusBadRequest, "invalid", "Pick a date range of one year or less.")
+			return store.StatsFilter{}, false
+		}
 	}
 	return store.StatsFilter{From: from, To: to, ProductID: product, SiteID: site, Inspector: inspector, Limit: limit}, true
 }

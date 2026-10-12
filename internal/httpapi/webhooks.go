@@ -7,9 +7,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"strings"
+	"syscall"
 	"time"
 
 	"quality_control/internal/domain"
@@ -131,8 +135,40 @@ func (s *Server) enqueueEvent(eventType string, payload map[string]any) {
 	go s.deliverEvent(eventType, payload)
 }
 
+// webhookClient refuses loopback, link-local (cloud metadata), multicast, and unspecified
+// addresses at connect time, so DNS tricks cannot reach them. LAN addresses stay allowed
+// because a shop server usually posts to machines on the same network.
+var webhookClient = &http.Client{
+	Timeout: 8 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+	Transport: &http.Transport{
+		Proxy: nil,
+		DialContext: (&net.Dialer{
+			Timeout: 5 * time.Second,
+			Control: func(_, address string, _ syscall.RawConn) error {
+				host, _, err := net.SplitHostPort(address)
+				if err != nil {
+					return err
+				}
+				ip := net.ParseIP(host)
+				if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+					ip.IsMulticast() || ip.IsUnspecified() {
+					return fmt.Errorf("webhook target %s is not allowed", host)
+				}
+				return nil
+			},
+		}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 8 * time.Second,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       60 * time.Second,
+	},
+}
+
 func (s *Server) deliverEvent(eventType string, payload map[string]any) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	hooks, err := s.store.ListActiveWebhooksForEvent(ctx, eventType)
 	if err != nil {
@@ -140,9 +176,9 @@ func (s *Server) deliverEvent(eventType string, payload map[string]any) {
 		return
 	}
 	body := map[string]any{
-		"event":      eventType,
+		"event":       eventType,
 		"occurred_at": time.Now().UTC().Format(time.RFC3339),
-		"data":       payload,
+		"data":        payload,
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -154,32 +190,38 @@ func (s *Server) deliverEvent(eventType string, payload map[string]any) {
 			slog.Warn("webhook delivery create failed", "webhook_id", hook.ID, "err", err)
 			continue
 		}
-		s.postWebhook(ctx, hook, delivery.ID, raw)
+		go s.postWebhook(hook, delivery.ID, eventType, raw)
 	}
 }
 
-func (s *Server) postWebhook(ctx context.Context, hook domain.Webhook, deliveryID uuid.UUID, raw []byte) {
+func (s *Server) postWebhook(hook domain.Webhook, deliveryID uuid.UUID, eventType string, raw []byte) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	mark := func(status string, code *int, body, msg string) {
+		markCtx, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+		_, _ = s.store.MarkWebhookDelivery(markCtx, deliveryID, status, code, body, msg)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hook.URL, bytes.NewReader(raw))
 	if err != nil {
-		_, _ = s.store.MarkWebhookDelivery(ctx, deliveryID, domain.WebhookFailed, nil, "", err.Error())
+		mark(domain.WebhookFailed, nil, "", err.Error())
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "quality-control-webhook/1")
-	req.Header.Set("X-QC-Event", "")
+	req.Header.Set("X-QC-Event", eventType)
 	if hook.Secret != "" {
 		mac := hmac.New(sha256.New, []byte(hook.Secret))
 		_, _ = mac.Write(raw)
 		req.Header.Set("X-QC-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
-	client := &http.Client{Timeout: 8 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := webhookClient.Do(req)
 	if err != nil {
-		_, _ = s.store.MarkWebhookDelivery(ctx, deliveryID, domain.WebhookFailed, nil, "", err.Error())
+		mark(domain.WebhookFailed, nil, "", err.Error())
 		return
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4000))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
 	code := resp.StatusCode
 	status := domain.WebhookDelivered
 	errMsg := ""
@@ -187,7 +229,7 @@ func (s *Server) postWebhook(ctx context.Context, hook domain.Webhook, deliveryI
 		status = domain.WebhookFailed
 		errMsg = "non-2xx response"
 	}
-	_, _ = s.store.MarkWebhookDelivery(ctx, deliveryID, status, &code, string(respBody), errMsg)
+	mark(status, &code, strings.ToValidUTF8(string(respBody), ""), errMsg)
 }
 
 func (s *Server) seedDemo(w http.ResponseWriter, r *http.Request) {

@@ -89,10 +89,10 @@ type ChecklistDetail struct {
 
 // NewChecklist creates a template.
 type NewChecklist struct {
-	Code        string            `json:"code"`
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	ProductID   *uuid.UUID        `json:"product_id"`
+	Code        string             `json:"code"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	ProductID   *uuid.UUID         `json:"product_id"`
 	Items       []NewChecklistItem `json:"items"`
 }
 
@@ -258,14 +258,14 @@ type NewEmailNotification struct {
 
 // DefectRateRow is defect rate for one dimension.
 type DefectRateRow struct {
-	Key              string  `json:"key"`
-	Label            string  `json:"label"`
-	Inspections      int     `json:"inspections"`
-	Failed           int     `json:"failed"`
-	Conditional      int     `json:"conditional"`
-	DefectQuantity   int     `json:"defect_quantity"`
-	DefectRate       float64 `json:"defect_rate"`
-	FailRate         float64 `json:"fail_rate"`
+	Key            string  `json:"key"`
+	Label          string  `json:"label"`
+	Inspections    int     `json:"inspections"`
+	Failed         int     `json:"failed"`
+	Conditional    int     `json:"conditional"`
+	DefectQuantity int     `json:"defect_quantity"`
+	DefectRate     float64 `json:"defect_rate"`
+	FailRate       float64 `json:"fail_rate"`
 }
 
 // AgingBucket is a count in an age window.
@@ -283,26 +283,26 @@ type AgingReport struct {
 
 // AgingItem is one aged open record.
 type AgingItem struct {
-	ID         uuid.UUID `json:"id"`
-	Number     string    `json:"number"`
-	Title      string    `json:"title"`
-	Status     string    `json:"status"`
-	Severity   string    `json:"severity,omitempty"`
-	OpenedAt   time.Time `json:"opened_at"`
-	AgeDays    int       `json:"age_days"`
-	DueDate    *string   `json:"due_date,omitempty"`
-	Overdue    bool      `json:"overdue"`
+	ID       uuid.UUID `json:"id"`
+	Number   string    `json:"number"`
+	Title    string    `json:"title"`
+	Status   string    `json:"status"`
+	Severity string    `json:"severity,omitempty"`
+	OpenedAt time.Time `json:"opened_at"`
+	AgeDays  int       `json:"age_days"`
+	DueDate  *string   `json:"due_date,omitempty"`
+	Overdue  bool      `json:"overdue"`
 }
 
 // TrendPoint is one day in a trend series.
 type TrendPoint struct {
-	Date         string `json:"date"`
-	Inspections  int    `json:"inspections"`
-	Pass         int    `json:"pass"`
-	Fail         int    `json:"fail"`
-	Conditional  int    `json:"conditional"`
-	NCROpened    int    `json:"ncr_opened"`
-	Defects      int    `json:"defects"`
+	Date        string `json:"date"`
+	Inspections int    `json:"inspections"`
+	Pass        int    `json:"pass"`
+	Fail        int    `json:"fail"`
+	Conditional int    `json:"conditional"`
+	NCROpened   int    `json:"ncr_opened"`
+	Defects     int    `json:"defects"`
 }
 
 // TrendReport is daily QC trends.
@@ -338,9 +338,9 @@ type DemoSeedResult struct {
 
 // MetricsSnapshot is process counters for JSON metrics.
 type MetricsSnapshot struct {
-	RequestsTotal   int64            `json:"requests_total"`
+	RequestsTotal    int64            `json:"requests_total"`
 	RequestsByStatus map[string]int64 `json:"requests_by_status"`
-	UptimeSeconds   int64            `json:"uptime_seconds"`
+	UptimeSeconds    int64            `json:"uptime_seconds"`
 }
 
 // WebhookEventTypes returns the supported event names.

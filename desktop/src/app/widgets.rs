@@ -1,46 +1,39 @@
+use super::chrome::{self, Btn};
 use eframe::egui;
 
 pub fn loading_spinner(ui: &mut egui::Ui) {
+    let p = chrome::palette(ui);
     ui.horizontal(|ui| {
         ui.spinner();
-        ui.label("Loading…");
+        ui.label(egui::RichText::new("Loading").color(p.muted).size(13.0));
     });
 }
 
 pub fn empty_state(ui: &mut egui::Ui, title: &str, hint: &str) {
-    ui.vertical_centered(|ui| {
-        ui.add_space(40.0);
-        ui.label(egui::RichText::new(title).heading().weak());
-        ui.label(egui::RichText::new(hint).weak());
-    });
+    let p = chrome::palette(ui);
+    ui.add_space(12.0);
+    ui.label(chrome::semi(title, 18.0, p.ink));
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(hint).color(p.muted).size(14.0));
 }
 
 pub fn error_banner(ui: &mut egui::Ui, message: &str) {
-    ui.colored_label(egui::Color32::from_rgb(200, 60, 60), message);
+    chrome::banner(ui, message, true);
 }
 
 pub fn searchable_field(ui: &mut egui::Ui, search: &mut String) {
-    ui.label("Search");
     ui.add(
         egui::TextEdit::singleline(search)
-            .hint_text("Filter table…")
-            .desired_width(220.0),
+            .hint_text("Filter this list")
+            .desired_width(260.0)
+            .margin(egui::Margin::symmetric(10.0, 8.0)),
     );
 }
 
 pub fn status_badge(ui: &mut egui::Ui, status: &str) {
-    let color = match status {
-        "pass" | "completed" | "closed" | "accepted" => egui::Color32::from_rgb(46, 125, 80),
-        "fail" | "critical" | "rejected" | "void" | "cancelled" => {
-            egui::Color32::from_rgb(180, 50, 50)
-        }
-        "major" | "conditional" | "on_hold" | "overdue" | "verification" => {
-            egui::Color32::from_rgb(180, 120, 30)
-        }
-        "open" | "in_progress" | "under_review" | "pending" | "minor" => {
-            egui::Color32::from_rgb(50, 100, 180)
-        }
-        _ => egui::Color32::GRAY,
-    };
-    ui.colored_label(color, status);
+    chrome::pill(ui, status);
+}
+
+pub fn quiet_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    chrome::button(ui, label, Btn::Quiet)
 }

@@ -147,10 +147,14 @@ func newLoginLimiter() *loginLimiter {
 func (l *loginLimiter) allow(ip string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.hits) > 10000 {
-		l.hits = map[string][]time.Time{}
-	}
 	window := now.Add(-10 * time.Minute)
+	if len(l.hits) > 10000 {
+		for key, times := range l.hits {
+			if len(times) == 0 || !times[len(times)-1].After(window) {
+				delete(l.hits, key)
+			}
+		}
+	}
 	prev := l.hits[ip]
 	kept := make([]time.Time, 0, len(prev)+1)
 	for _, t := range prev {

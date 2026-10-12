@@ -194,6 +194,12 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.handle(mux, "POST /api/v1/attachments", operator, s.uploadAttachment)
 	s.handle(mux, "GET /api/v1/attachments/{id}", read, s.downloadAttachment)
 	s.handle(mux, "DELETE /api/v1/attachments/{id}", supervisor, s.deleteAttachment)
+
+	s.handle(mux, "GET /api/v1/lookup", read, s.lookup)
+	s.handle(mux, "PATCH /api/v1/inspections/{id}", inspector, s.updateInspection)
+	for _, kind := range store.DeletableKinds() {
+		s.handle(mux, "DELETE /api/v1/"+kind+"/{id}", admin, s.deleteRecord(kind))
+	}
 }
 
 func (s *Server) handle(mux *http.ServeMux, pattern, minRole string, h http.HandlerFunc) {
@@ -223,10 +229,12 @@ func clientIP(r *http.Request, trust bool) string {
 		host = r.RemoteAddr
 	}
 	if trust && isLoopback(host) {
+		// The proxy appends the real peer last; anything before it came from the client.
 		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			first := strings.TrimSpace(strings.Split(fwd, ",")[0])
-			if first != "" {
-				return first
+			parts := strings.Split(fwd, ",")
+			last := strings.TrimSpace(parts[len(parts)-1])
+			if net.ParseIP(last) != nil {
+				return last
 			}
 		}
 	}

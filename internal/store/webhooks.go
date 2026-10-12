@@ -229,12 +229,8 @@ func (s *Store) CreateWebhookDelivery(ctx context.Context, webhookID uuid.UUID, 
 
 // MarkWebhookDelivery records the outcome of a delivery attempt.
 func (s *Store) MarkWebhookDelivery(ctx context.Context, id uuid.UUID, status string, code *int, body, errMsg string) (domain.WebhookDelivery, error) {
-	if len(body) > 4000 {
-		body = body[:4000]
-	}
-	if len(errMsg) > 1000 {
-		errMsg = errMsg[:1000]
-	}
+	body = clip(body, 4000)
+	errMsg = clip(errMsg, 1000)
 	var delivered any
 	if status == domain.WebhookDelivered {
 		delivered = time.Now().UTC()

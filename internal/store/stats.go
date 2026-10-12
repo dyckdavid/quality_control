@@ -423,9 +423,7 @@ func (s *Store) SearchRecords(ctx context.Context, q string, limit int) ([]domai
 		if err := rows.Scan(&h.EntityType, &h.ID, &h.Number, &h.Title, &h.Status, &h.Snippet, &h.CreatedAt); err != nil {
 			return nil, mapErr(err)
 		}
-		if len(h.Snippet) > 160 {
-			h.Snippet = h.Snippet[:160]
-		}
+		h.Snippet = clip(h.Snippet, 160)
 		out = append(out, h)
 	}
 	return out, rows.Err()

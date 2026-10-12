@@ -37,7 +37,24 @@ func (s *Server) createNCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := s.store.CreateNCR(r.Context(), s.actor(r), in)
+	if err == nil {
+		s.enqueueEvent(domain.EventNCRCreated, ncrEvent(v))
+	}
 	s.created(w, r, "/api/v1/nonconformances/", v.ID, v, err)
+}
+
+func ncrEvent(n domain.Nonconformance) map[string]any {
+	return map[string]any{
+		"nonconformance_id": n.ID,
+		"ncr_number":        n.NCRNumber,
+		"title":             n.Title,
+		"severity":          n.Severity,
+		"status":            n.Status,
+		"disposition":       n.Disposition,
+		"product_id":        n.ProductID,
+		"lot_id":            n.LotID,
+		"inspection_id":     n.InspectionID,
+	}
 }
 
 func (s *Server) getNCR(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +89,9 @@ func (s *Server) disposeNCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := s.store.DisposeNCR(r.Context(), s.actor(r), id, in)
+	if err == nil {
+		s.enqueueEvent(domain.EventNCRDispositioned, ncrEvent(v))
+	}
 	s.one(w, r, v, err)
 }
 
@@ -126,6 +146,15 @@ func (s *Server) createCAPA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v, err := s.store.CreateCAPA(r.Context(), s.actor(r), in)
+	if err == nil {
+		s.enqueueEvent(domain.EventCAPACreated, map[string]any{
+			"corrective_action_id": v.ID,
+			"ca_number":            v.CANumber,
+			"title":                v.Title,
+			"nonconformance_id":    v.NonconformanceID,
+			"due_date":             v.DueDate,
+		})
+	}
 	s.created(w, r, "/api/v1/corrective-actions/", v.ID, v, err)
 }
 

@@ -384,19 +384,15 @@ CREATE TRIGGER nonconformances_set_updated_at BEFORE UPDATE ON nonconformances F
 CREATE TRIGGER corrective_actions_set_updated_at BEFORE UPDATE ON corrective_actions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 INSERT INTO defect_codes (id, code, name, severity, category) VALUES
-    (gen_random_uuid(), 'VIS-SCR', 'Scratch', 'minor', 'visual'),
-    (gen_random_uuid(), 'VIS-DEN', 'Dent', 'major', 'visual'),
-    (gen_random_uuid(), 'VIS-CRK', 'Crack', 'critical', 'visual'),
-    (gen_random_uuid(), 'VIS-DIS', 'Discoloration', 'minor', 'visual'),
-    (gen_random_uuid(), 'VIS-CON', 'Contamination', 'major', 'visual'),
-    (gen_random_uuid(), 'DIM-OOT', 'Out of tolerance', 'major', 'dimensional'),
-    (gen_random_uuid(), 'DIM-OOR', 'Out of round', 'major', 'dimensional'),
-    (gen_random_uuid(), 'DIM-MIS', 'Missing feature', 'critical', 'dimensional'),
-    (gen_random_uuid(), 'FUN-NOP', 'Does not function', 'critical', 'functional'),
-    (gen_random_uuid(), 'FUN-INT', 'Intermittent function', 'major', 'functional'),
-    (gen_random_uuid(), 'MAT-WRG', 'Wrong material', 'critical', 'material'),
-    (gen_random_uuid(), 'MAT-MIX', 'Mixed parts', 'major', 'material'),
-    (gen_random_uuid(), 'PKG-DMG', 'Damaged packaging', 'minor', 'packaging'),
-    (gen_random_uuid(), 'PKG-LBL', 'Incorrect label', 'major', 'packaging'),
-    (gen_random_uuid(), 'DOC-MIS', 'Missing documentation', 'minor', 'documentation'),
-    (gen_random_uuid(), 'DOC-INC', 'Incomplete traceability', 'major', 'documentation');
+    (gen_random_uuid(), 'WELD-MISS', 'Missed or incomplete weld', 'major', 'weld'),
+    (gen_random_uuid(), 'WELD-CRACK', 'Crack in a weld or in the steel', 'critical', 'weld'),
+    (gen_random_uuid(), 'EDGE-BURR', 'Sharp edge or burr', 'major', 'fit'),
+    (gen_random_uuid(), 'LATCH-OP', 'Latch, hinge, or squeeze does not travel', 'major', 'function'),
+    (gen_random_uuid(), 'DIM-OUT', 'Dimension out of print', 'major', 'dimension'),
+    (gen_random_uuid(), 'FIT-GAP', 'Fit-up out of print', 'major', 'fit'),
+    (gen_random_uuid(), 'PAINT-THIN', 'Thin or missed finish', 'minor', 'finish'),
+    (gen_random_uuid(), 'PAINT-RUN', 'Paint run or sag', 'minor', 'finish'),
+    (gen_random_uuid(), 'HDW-MISS', 'Missing pin, bolt, or chain', 'minor', 'hardware'),
+    (gen_random_uuid(), 'GLASS-CRACK', 'Cracked glass', 'critical', 'hearth'),
+    (gen_random_uuid(), 'GASKET-GAP', 'Gasket gap', 'major', 'hearth'),
+    (gen_random_uuid(), 'PLATE-MISS', 'Rating plate missing or unreadable', 'critical', 'hearth');

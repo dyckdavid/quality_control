@@ -8,7 +8,7 @@ Native desktop client for the quality-control API. Built with **Rust + egui/efra
 | --- | --- | --- |
 | Runs on this Linux VM | Yes — OpenGL via glow, easy under Xvfb | Yes, but needs Slint tooling/DSL |
 | Language | Pure Rust UI code | `.slint` declarative DSL + Rust |
-| Cross-platform | macOS + Linux (and Windows) without webviews | Same |
+| Cross-platform | macOS first, plus Windows and Linux, without webviews | Same |
 | Fit for data tables | Immediate-mode grids/search/sort are straightforward | Excellent for designed UIs; more setup |
 
 We chose **egui/eframe** so the entire client stays in Rust, builds with a normal `cargo` toolchain on Linux and macOS, and supports automated screenshots under Xvfb without embedding a webview (no Electron/Tauri).
@@ -40,7 +40,18 @@ sudo apt install build-essential pkg-config libxcb-render0-dev \
 
 ### macOS
 
-Install a recent Xcode Command Line Tools / Rust via rustup. No extra GUI toolkit install is required for egui’s glow backend.
+Install Rust via rustup. No extra GUI toolkit is required. The window is sized for a Mac laptop and uses the light plant theme unless you switch it in Settings.
+
+### Windows
+
+The same binary target builds on Windows. From a terminal where `cargo` is on PATH:
+
+```bat
+cd desktop
+cargo run --release -- --server http://127.0.0.1:8080
+```
+
+GitHub Actions builds `qc-desktop.exe` on `windows-latest` as well as macOS and Linux.
 
 ## Build
 
@@ -50,6 +61,13 @@ cargo build --release
 ```
 
 Binary: `target/release/qc-desktop`
+
+## Installers
+
+- **macOS DMG** (universal, Apple Silicon and Intel): `desktop/packaging/macos/build-dmg.sh` writes `target/dist/QualityControl-<version>-macos.dmg`. Set `QC_SIGN_IDENTITY` to a Developer ID identity to sign for distribution; without it the app is ad-hoc signed, so other Macs need right-click, Open the first time.
+- **Windows installer**: `desktop/packaging/windows/installer.iss` (Inno Setup 6) wraps `target/release/qc-desktop.exe` into `QualityControl-<version>-windows-setup.exe`. It installs per user, so no admin rights are needed.
+- **GitHub Actions**: `.github/workflows/release.yml` builds both. Run it from the Actions tab to get them as build artifacts, or push a `v*` tag to publish them on a GitHub release.
+- The app icon lives in `assets/icon.png` and `assets/icon.ico`; `cargo run --example make_icon` redraws both.
 
 ## Run
 
@@ -98,6 +116,18 @@ export QC_API_PASSWORD=change-me-now
 cargo test --tests -- --nocapture
 ```
 
+Those only read. The tests that create lots, inspections, alerts, and corrective
+actions (including `shop_floor_workflow`, the full build-to-close loop) also need
+`QC_API_ALLOW_WRITES=1`. Point them at a scratch server, not the shop database:
+
+```bash
+QC_ENV_FILE=/dev/null QC_HTTP_ADDR=127.0.0.1:8090 \
+  QC_DATABASE_URL='postgres://qc:qc-local-password@127.0.0.1:5433/qc_test?sslmode=disable' \
+  QC_JWT_SECRET=scratch-secret-scratch-secret-scratch-1234 go run ./cmd/quality-control &
+QC_API_ALLOW_WRITES=1 QC_API_BASE_URL=http://127.0.0.1:8090 \
+  QC_API_PASSWORD=integration-secret cargo test --test api_integration
+```
+
 ## Screenshots under Xvfb (Linux)
 
 ```bash
@@ -132,4 +162,4 @@ Persisted JSON via the `directories` crate, typically:
 
 ## CI
 
-GitHub Actions workflow `.github/workflows/desktop.yml` builds on `ubuntu-latest` and `macos-latest`, runs unit tests, and (on Ubuntu) starts Postgres + the Go API for integration tests.
+GitHub Actions workflow `.github/workflows/desktop.yml` builds on `ubuntu-latest`, `macos-latest`, and `windows-latest`, runs unit tests, and (on Ubuntu) starts Postgres + the Go API for integration tests. `.github/workflows/release.yml` builds the installers.

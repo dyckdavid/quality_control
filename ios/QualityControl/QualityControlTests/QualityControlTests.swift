@@ -4,6 +4,52 @@ import Testing
 
 struct QualityControlTests {
 
+    @Test func scannedLabelsResolveToTheirCode() {
+        #expect(ScanCode.clean("  CHUTE-101 \n") == "CHUTE-101")
+        #expect(ScanCode.clean("https://shop.example/qc/lots/GATE-12") == "GATE-12")
+        #expect(ScanCode.clean("https://shop.example/scan?code=TAPE-25") == "TAPE-25")
+    }
+
+    @Test func editorSendsOnlyChangedFieldsWithTypes() throws {
+        let row: JSONObject = ["part_number": "GATE-12", "name": "Gate", "unit": "ea", "description": "", "active": true]
+        var values = RecordForm.values(for: .products, row: row, editing: true)
+        let original = values
+        values["name"] = "Corral gate 12 ft"
+        values["active"] = "false"
+        let body = try RecordForm.body(for: .products, values: values, original: original)
+        #expect(body.count == 2)
+        #expect(body["name"] as? String == "Corral gate 12 ft")
+        #expect(body["active"] as? Bool == false)
+    }
+
+    @Test func editorKeepsLargeNumbersExact() throws {
+        let row: JSONObject = ["lot_number": "L1", "quantity": 1200, "unit": "ea", "supplier_lot": "", "notes": ""]
+        var values = RecordForm.values(for: .lots, row: row, editing: true)
+        #expect(values["quantity"] == "1200")
+        let original = values
+        values["quantity"] = "1250.5"
+        let body = try RecordForm.body(for: .lots, values: values, original: original)
+        #expect(body["quantity"] as? Double == 1250.5)
+    }
+
+    @Test func leavingFixedSamplingClearsTheSize() throws {
+        let row: JSONObject = ["name": "Final", "sampling_type": "fixed", "sample_size": 5, "notes": ""]
+        var values = RecordForm.values(for: .plans, row: row, editing: true)
+        let original = values
+        values["sampling_type"] = "hundred_percent"
+        let body = try RecordForm.body(for: .plans, values: values, original: original)
+        #expect(body["clear_sample_size"] as? Bool == true)
+        #expect(body["sample_size"] == nil)
+    }
+
+    @Test func requiredFieldsCannotBeBlanked() {
+        let row: JSONObject = ["code": "SHOP", "name": "Shop", "address": "", "active": true]
+        var values = RecordForm.values(for: .sites, row: row, editing: true)
+        let original = values
+        values["code"] = "  "
+        #expect(throws: APIFailure.self) { try RecordForm.body(for: .sites, values: values, original: original) }
+    }
+
     @Test func clientDashboardComputesOpenWorkAndPassRate() throws {
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let recent = now.addingTimeInterval(-86_400)

@@ -339,6 +339,122 @@ pub struct NewLot {
     pub notes: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RefreshRequest {
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlanDetail {
+    pub id: Uuid,
+    pub product_id: Uuid,
+    pub revision: String,
+    pub name: String,
+    pub status: String,
+    pub sampling_type: String,
+    pub sample_size: Option<i32>,
+    pub notes: String,
+    pub characteristics: Vec<Characteristic>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Characteristic {
+    pub id: Uuid,
+    pub sequence: i32,
+    pub code: String,
+    pub name: String,
+    pub characteristic_type: String,
+    pub method: String,
+    pub nominal: Option<f64>,
+    pub lower_limit: Option<f64>,
+    pub upper_limit: Option<f64>,
+    pub unit: String,
+    pub critical: bool,
+}
+
+impl Characteristic {
+    pub fn is_variable(&self) -> bool {
+        self.characteristic_type == "variable"
+    }
+
+    pub fn has_limits(&self) -> bool {
+        self.lower_limit.is_some() || self.upper_limit.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DefectCode {
+    pub id: Uuid,
+    pub code: String,
+    pub name: String,
+    pub severity: String,
+    pub category: String,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Gauge {
+    pub id: Uuid,
+    pub code: String,
+    pub name: String,
+    pub calibration_due: Option<String>,
+    pub active: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResultInput {
+    pub characteristic_id: Uuid,
+    pub sample_index: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub measured_value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attribute_result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gauge_id: Option<Uuid>,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResultBatch {
+    pub results: Vec<ResultInput>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NewInspectionDefect {
+    pub defect_code_id: Uuid,
+    pub quantity: i32,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CompleteInspection {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quantity_inspected: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quantity_accepted: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quantity_rejected: Option<f64>,
+    pub notes: String,
+    pub open_ncr: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompletedInspection {
+    pub inspection: Inspection,
+    pub nonconformance: Option<Nonconformance>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DispositionRequest {
+    pub disposition: String,
+    pub notes: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NoteBody {
+    pub notes: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionInfo {
     pub name: String,

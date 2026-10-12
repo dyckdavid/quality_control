@@ -43,7 +43,7 @@ struct LotsView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(lot.lotNumber)
                                     .font(QCTheme.headlineFont)
-                                Text("\(formatNumber(lot.quantity)) \(lot.unit) · \(displayName(lot.source))")
+                                Text("\(formatNumber(lot.quantity)) \(lot.unit) · \(lotSourceName(lot.source))")
                                     .font(.subheadline)
                                     .foregroundStyle(QCTheme.mutedInk)
                                 Text(lot.receivedAt.formatted(date: .abbreviated, time: .omitted))
@@ -87,24 +87,26 @@ struct LotsView: View {
             }
         }
         .searchable(text: $search, prompt: "Lot number or notes")
-        .safeAreaInset(edge: .top) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    FilterChip(title: "All", selected: status.isEmpty) {
-                        status = ""
-                        Task { await reload() }
-                    }
-                    ForEach(model.enums.lotStatuses, id: \.self) { item in
-                        FilterChip(title: displayName(item), selected: status == item) {
-                            status = item
+        .safeAreaBar(edge: .top) {
+            VStack(spacing: 0) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        FilterChip(title: "All", selected: status.isEmpty) {
+                            status = ""
                             Task { await reload() }
                         }
+                        ForEach(model.enums.lotStatuses, id: \.self) { item in
+                            FilterChip(title: displayName(item), selected: status == item) {
+                                status = item
+                                Task { await reload() }
+                            }
+                        }
                     }
+                    .padding(.horizontal)
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
             }
-            .background(QCTheme.canvas.opacity(0.95))
+            .padding(.vertical, 8)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -177,8 +179,12 @@ struct LotForm: View {
     var body: some View {
         Form {
             Section {
-                TextField("Lot number", text: $lotNumber)
-                    .accessibilityLabel("Lot number")
+                HStack {
+                    TextField("Lot number", text: $lotNumber)
+                        .textInputAutocapitalization(.characters)
+                        .accessibilityLabel("Lot number")
+                    ScanFieldButton(text: $lotNumber)
+                }
                 if attempted && lotNumber.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text("Lot number is required.")
                         .font(.caption)
@@ -205,7 +211,7 @@ struct LotForm: View {
                     }
                 }
                 Picker("Source", selection: $source) {
-                    ForEach(model.enums.lotSources, id: \.self) { Text(displayName($0)).tag($0) }
+                    ForEach(model.enums.lotSources, id: \.self) { Text(lotSourceName($0)).tag($0) }
                 }
             }
             Section("Quantity") {
@@ -221,7 +227,10 @@ struct LotForm: View {
                 }
             }
             Section("Notes") {
-                TextField("Supplier lot", text: $supplierLot)
+                HStack {
+                    TextField("Supplier lot", text: $supplierLot)
+                    ScanFieldButton(text: $supplierLot)
+                }
                 TextField("Notes", text: $notes, axis: .vertical)
             }
         }
@@ -289,7 +298,7 @@ struct LotDetailView: View {
                     Section("Lot") {
                         LabeledContent("Number", value: lot.lotNumber)
                         LabeledContent("Quantity", value: "\(formatNumber(lot.quantity)) \(lot.unit)")
-                        LabeledContent("Source", value: displayName(lot.source))
+                        LabeledContent("Source", value: lotSourceName(lot.source))
                         LabeledContent("Supplier lot", value: lot.supplierLot.isEmpty ? "—" : lot.supplierLot)
                         LabeledContent("Received", value: lot.receivedAt.formatted(date: .abbreviated, time: .shortened))
                         StatusBadge(text: lot.status)
@@ -323,6 +332,7 @@ struct LotDetailView: View {
                             }
                         }
                     }
+                    LabelSection(code: lot.lotNumber, title: lot.notes, subtitle: "\(formatNumber(lot.quantity)) \(lot.unit)")
                     PhotoCaptureSection(
                         entityType: "lot",
                         entityId: lot.id,
@@ -343,6 +353,7 @@ struct LotDetailView: View {
             }
         }
         .navigationTitle(lot?.lotNumber ?? "Lot")
+        .recordMenu(path: "/api/v1/lots/\(id.uuidString)", noun: "lot", editKind: .lots) { await reload() }
         .task { await reload() }
         .refreshable { await reload() }
         .errorAlert($errorMessage)
@@ -453,7 +464,7 @@ struct InspectionsView: View {
         .navigationTitle("Inspections")
         .navigationDestination(for: UUID.self) { InspectionDetailView(id: $0) }
         .searchable(text: $search, prompt: "Inspection number")
-        .safeAreaInset(edge: .top) {
+        .safeAreaBar(edge: .top) {
             VStack(alignment: .leading, spacing: 8) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -485,7 +496,7 @@ struct InspectionsView: View {
                 }
             }
             .padding(.vertical, 8)
-            .background(QCTheme.canvas.opacity(0.95))
+            .fixedSize(horizontal: false, vertical: true)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -529,6 +540,7 @@ struct InspectionDetailView: View {
     @State private var outcome: String?
     @State private var confirmCancel = false
     @State private var validationMessage: String?
+    @State private var headerNotes = ""
 
     var body: some View {
         Group {
@@ -663,8 +675,23 @@ struct InspectionDetailView: View {
                             }
                         }
                     }
-                    if !detail.inspection.notes.isEmpty {
-                        Section("Notes") { Text(detail.inspection.notes) }
+                    Section {
+                        if canEditNotes(detail) {
+                            TextField("Notes", text: $headerNotes, axis: .vertical)
+                                .lineLimit(2...6)
+                            if headerNotes != detail.inspection.notes {
+                                Button("Save notes") { Task { await saveNotes() } }
+                            }
+                        } else {
+                            Text(detail.inspection.notes.isEmpty ? "No notes" : detail.inspection.notes)
+                                .foregroundStyle(detail.inspection.notes.isEmpty ? QCTheme.mutedInk : QCTheme.ink)
+                        }
+                    } header: {
+                        Text("Notes")
+                    } footer: {
+                        if detail.inspection.status != "in_progress", !canEditNotes(detail) {
+                            Text("A supervisor edits notes on a finished inspection.")
+                        }
                     }
                     PhotoCaptureSection(
                         entityType: "inspection",
@@ -686,6 +713,7 @@ struct InspectionDetailView: View {
             }
         }
         .navigationTitle(detail?.inspection.inspectionNumber ?? "Inspection")
+        .recordMenu(path: "/api/v1/inspections/\(id.uuidString)", noun: "inspection")
         .task { await reload() }
         .refreshable { await reload() }
         .errorAlert($errorMessage)
@@ -742,6 +770,7 @@ struct InspectionDetailView: View {
         do {
             let loaded: InspectionDetail = try await model.client.one("/api/v1/inspections/\(id.uuidString)")
             detail = loaded
+            headerNotes = loaded.inspection.notes
             plan = try? await model.client.one("/api/v1/plans/\(loaded.inspection.planId.uuidString)")
             defects = (try? await model.client.list("/api/v1/defect-codes", query: Query.compact(["active": "true"]))) ?? []
             errorMessage = nil
@@ -783,6 +812,20 @@ struct InspectionDetailView: View {
             let _: [InspectionResult] = try await model.client.create("/api/v1/inspections/\(id.uuidString)/results", body: ["results": results])
             measurements = [:]
             attributes = [:]
+            await reload()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func canEditNotes(_ detail: InspectionDetail) -> Bool {
+        guard model.user?.allows(.inspector) == true else { return false }
+        return detail.inspection.status == "in_progress" || model.user?.allows(.supervisor) == true
+    }
+
+    private func saveNotes() async {
+        do {
+            let _: Inspection = try await model.client.update("/api/v1/inspections/\(id.uuidString)", body: ["notes": headerNotes])
             await reload()
         } catch {
             errorMessage = error.localizedDescription

@@ -212,6 +212,13 @@ type PatchLot struct {
 	Notes       *string    `json:"notes"`
 }
 
+// PatchInspection edits the header of an inspection.
+type PatchInspection struct {
+	Notes        *string    `json:"notes"`
+	StationID    *uuid.UUID `json:"station_id"`
+	ClearStation bool       `json:"clear_station"`
+}
+
 // LotStatusChange is a manual lot move.
 type LotStatusChange struct {
 	Status string `json:"status"`

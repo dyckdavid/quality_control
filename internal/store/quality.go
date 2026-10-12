@@ -175,7 +175,7 @@ func (s *Store) UpdateNCR(ctx context.Context, actor domain.Actor, id uuid.UUID,
 		if err != nil {
 			return mapErr(err)
 		}
-		if cur.Status != domain.NCROpen && cur.Status != domain.NCRUnderReview {
+		if cur.Status != domain.NCROpen && cur.Status != domain.NCRUnderReview && !actor.IsAdmin() {
 			return invalid("this nonconformance can no longer be edited")
 		}
 		title, desc, sev := cur.Title, cur.Description, cur.Severity
@@ -296,11 +296,11 @@ func (s *Store) transitionNCR(ctx context.Context, actor domain.Actor, id uuid.U
 		if err != nil {
 			return mapErr(err)
 		}
-		if !domain.CanNCRTransition(cur.Status, to) {
-			return invalid("that nonconformance status change is not allowed")
-		}
 		if to == domain.NCRClosed && cur.Disposition == domain.DispPending {
 			return invalid("record a disposition before closing")
+		}
+		if !domain.CanNCRTransition(cur.Status, to) {
+			return invalid("that nonconformance status change is not allowed")
 		}
 		sql, args := sqlFor(cur)
 		if sql == "" {
@@ -412,7 +412,7 @@ func (s *Store) UpdateCAPA(ctx context.Context, actor domain.Actor, id uuid.UUID
 		if err != nil {
 			return mapErr(err)
 		}
-		if cur.Status == domain.CAPAClosed || cur.Status == domain.CAPACancelled {
+		if (cur.Status == domain.CAPAClosed || cur.Status == domain.CAPACancelled) && !actor.IsAdmin() {
 			return invalid("this corrective action can no longer be edited")
 		}
 		title, cause, plan := cur.Title, cur.RootCause, cur.ActionPlan

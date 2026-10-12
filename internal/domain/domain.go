@@ -108,9 +108,13 @@ func AtLeast(role, min string) bool {
 // Actor is the person and request behind a write, copied into the audit log.
 type Actor struct {
 	ID        uuid.UUID
+	Role      string
 	IP        string
 	RequestID string
 }
+
+// IsAdmin reports whether the caller may override status locks on records.
+func (a Actor) IsAdmin() bool { return a.Role == RoleAdmin }
 
 // Principal is the authenticated caller for one request.
 type Principal struct {
@@ -123,7 +127,7 @@ type Principal struct {
 
 // Actor returns the audit identity for this caller.
 func (p Principal) Actor() Actor {
-	return Actor{ID: p.ID, IP: p.IP, RequestID: p.RequestID}
+	return Actor{ID: p.ID, Role: p.Role, IP: p.IP, RequestID: p.RequestID}
 }
 
 // User is an account. Password hashes never appear on this struct.
