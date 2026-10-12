@@ -8,6 +8,7 @@ final class AppModel {
     var notice: String?
     var lastUsername: String
     private(set) var client: APIClient
+    let offline = OfflineStore()
     private let defaults = UserDefaults.standard
 
     init() {
@@ -31,6 +32,37 @@ final class AppModel {
         }
         client.onTokensRefreshed = { [weak self] in
             self?.persist()
+        }
+    }
+
+    func applyServerAddress() throws {
+        let url = try validatedURL()
+        client.baseURL = url
+        serverAddress = url.absoluteString
+        defaults.set(serverAddress, forKey: Keys.server)
+    }
+
+    func syncPending() async {
+        await offline.flush(using: client)
+        await uploadPendingPhotos()
+    }
+
+    private func uploadPendingPhotos() async {
+        guard offline.isOnline, user?.allows(.operator) == true else { return }
+        for photo in LocalPhotoStore.shared.pendingUploads() {
+            guard let data = LocalPhotoStore.shared.data(for: photo) else { continue }
+            do {
+                _ = try await client.upload(
+                    entityType: photo.entityType,
+                    entityId: photo.entityId,
+                    fileName: photo.fileName,
+                    mimeType: "image/jpeg",
+                    data: data
+                )
+                LocalPhotoStore.shared.markUploaded(photo)
+            } catch {
+                break
+            }
         }
     }
 

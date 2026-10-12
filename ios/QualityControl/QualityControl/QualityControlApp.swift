@@ -8,7 +8,8 @@ struct QualityControlApp: App {
         WindowGroup {
             RootView()
                 .environment(model)
-                .tint(Color(red: 0.11, green: 0.38, blue: 0.40))
+                .tint(QCTheme.brandColor)
+                .preferredColorScheme(nil)
         }
     }
 }

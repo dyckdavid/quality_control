@@ -19,6 +19,7 @@ struct UsersView: View {
                 }
             } else if data.loading { ProgressView() }
         }
+        .qcListChrome()
         .navigationTitle("Users")
         .navigationDestination(for: UUID.self) { UserDetailView(id: $0) }
         .toolbar {
@@ -148,6 +149,7 @@ struct AuditView: View {
                 }
             } else if data.loading { ProgressView() }
         }
+        .qcListChrome()
         .navigationTitle("Audit log")
         .refreshable { await reload() }
         .task { await reload() }
@@ -192,6 +194,7 @@ struct MeasurementsView: View {
                 StatusBadge(text: point.inSpec ? "pass" : "fail")
             }
         }
+        .qcListChrome()
         .navigationTitle("Measurements")
         .task { products = (try? await model.client.list("/api/v1/products")) ?? [] }
         .errorAlert($errorMessage)
