@@ -29,24 +29,29 @@ type Server struct {
 	store   *store.Store
 	tokens  *auth.Manager
 	limiter *loginLimiter
+	metrics *metricsState
 }
 
 // New builds the API. store is used for every request except health and version.
 func New(cfg config.Config, st *store.Store, tokens *auth.Manager) *Server {
-	return &Server{cfg: cfg, store: st, tokens: tokens, limiter: newLoginLimiter()}
+	return &Server{cfg: cfg, store: st, tokens: tokens, limiter: newLoginLimiter(), metrics: newMetricsState()}
 }
 
 // Handler is the full middleware stack and router.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.routes(mux)
-	return s.recover(s.requestID(s.secure(s.log(s.cors(mux)))))
+	// requestAudit and metrics only observe; they do not alter responses.
+	return s.recover(s.requestID(s.secure(s.log(s.cors(s.metricsMiddleware(s.requestAuditMiddleware(mux)))))))
 }
 
 func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /readyz", s.ready)
+	mux.HandleFunc("GET /metrics", s.prometheusMetrics)
 	mux.HandleFunc("GET /api/v1/version", s.version)
+	mux.HandleFunc("GET /api/v1/openapi.json", s.openapiJSON)
+	mux.HandleFunc("GET /api/v1/openapi.yaml", s.openapiYAML)
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.refresh)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
@@ -64,6 +69,44 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.handle(mux, "GET /api/v1/dashboard", read, s.dashboard)
 	s.handle(mux, "GET /api/v1/measurements", read, s.measurements)
 	s.handle(mux, "GET /api/v1/audit", supervisor, s.audit)
+	s.handle(mux, "GET /api/v1/metrics", read, s.jsonMetrics)
+	s.handle(mux, "GET /api/v1/search", read, s.search)
+	s.handle(mux, "GET /api/v1/request-audit", supervisor, s.listRequestAudit)
+
+	s.handle(mux, "GET /api/v1/stats/defect-rates", read, s.statsDefectRates)
+	s.handle(mux, "GET /api/v1/stats/ncr-aging", read, s.statsNCRAging)
+	s.handle(mux, "GET /api/v1/stats/capa-aging", read, s.statsCAPAAging)
+	s.handle(mux, "GET /api/v1/stats/trends", read, s.statsTrends)
+
+	s.handle(mux, "GET /api/v1/reports/inspections.csv", read, s.reportInspectionsCSV)
+	s.handle(mux, "GET /api/v1/reports/nonconformances.csv", read, s.reportNCRSCSV)
+	s.handle(mux, "GET /api/v1/reports/corrective-actions.csv", read, s.reportCAPAsCSV)
+	s.handle(mux, "GET /api/v1/reports/inspections.pdf", read, s.reportInspectionsPDF)
+	s.handle(mux, "GET /api/v1/reports/summary.pdf", read, s.reportSummaryPDF)
+
+	s.handle(mux, "GET /api/v1/checklists", read, s.listChecklists)
+	s.handle(mux, "POST /api/v1/checklists", manager, s.createChecklist)
+	s.handle(mux, "GET /api/v1/checklists/{id}", read, s.getChecklist)
+	s.handle(mux, "PATCH /api/v1/checklists/{id}", manager, s.updateChecklist)
+	s.handle(mux, "POST /api/v1/checklists/{id}/items", manager, s.addChecklistItem)
+	s.handle(mux, "PATCH /api/v1/checklist-items/{id}", manager, s.updateChecklistItem)
+	s.handle(mux, "DELETE /api/v1/checklist-items/{id}", manager, s.deleteChecklistItem)
+	s.handle(mux, "GET /api/v1/inspections/{id}/checklists", read, s.listInspectionChecklistRuns)
+	s.handle(mux, "POST /api/v1/inspections/{id}/checklists", inspector, s.startInspectionChecklist)
+	s.handle(mux, "GET /api/v1/checklist-runs/{id}", read, s.getChecklistRun)
+	s.handle(mux, "POST /api/v1/checklist-runs/{id}/items/{itemID}", inspector, s.answerChecklistRunItem)
+	s.handle(mux, "POST /api/v1/checklist-runs/{id}/complete", inspector, s.completeChecklistRun)
+
+	s.handle(mux, "GET /api/v1/webhooks/events", supervisor, s.listWebhookEvents)
+	s.handle(mux, "GET /api/v1/webhooks", supervisor, s.listWebhooks)
+	s.handle(mux, "POST /api/v1/webhooks", supervisor, s.createWebhook)
+	s.handle(mux, "GET /api/v1/webhooks/{id}", supervisor, s.getWebhook)
+	s.handle(mux, "PATCH /api/v1/webhooks/{id}", supervisor, s.updateWebhook)
+	s.handle(mux, "GET /api/v1/webhook-deliveries", supervisor, s.listWebhookDeliveries)
+	s.handle(mux, "GET /api/v1/notifications", supervisor, s.listNotifications)
+	s.handle(mux, "POST /api/v1/notifications/email", supervisor, s.enqueueEmail)
+
+	s.handle(mux, "POST /api/v1/admin/seed-demo", admin, s.seedDemo)
 
 	s.handle(mux, "GET /api/v1/users", admin, s.listUsers)
 	s.handle(mux, "POST /api/v1/users", admin, s.createUser)

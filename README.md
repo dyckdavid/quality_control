@@ -193,8 +193,33 @@ Lists accept `limit` (1–200, default 50) and `offset`. Responses are `{"data":
 | POST | /api/v1/attachments | operator, multipart fields `entity_type`, `entity_id`, `file` |
 | GET, DELETE | /api/v1/attachments/{id} | read / supervisor |
 | GET | /api/v1/audit | supervisor |
+| GET | /api/v1/search?q= | any user |
+| GET | /api/v1/metrics | any user |
+| GET | /api/v1/request-audit | supervisor |
+| GET | /api/v1/stats/defect-rates | any user |
+| GET | /api/v1/stats/ncr-aging | any user |
+| GET | /api/v1/stats/capa-aging | any user |
+| GET | /api/v1/stats/trends | any user |
+| GET | /api/v1/reports/inspections.csv | any user |
+| GET | /api/v1/reports/nonconformances.csv | any user |
+| GET | /api/v1/reports/corrective-actions.csv | any user |
+| GET | /api/v1/reports/inspections.pdf | any user |
+| GET | /api/v1/reports/summary.pdf | any user |
+| GET, POST, PATCH | /api/v1/checklists | read / quality manager |
+| POST | /api/v1/checklists/{id}/items | quality manager |
+| PATCH, DELETE | /api/v1/checklist-items/{id} | quality manager |
+| GET, POST | /api/v1/inspections/{id}/checklists | read / inspector |
+| GET | /api/v1/checklist-runs/{id} | any user |
+| POST | /api/v1/checklist-runs/{id}/items/{itemID} | inspector |
+| POST | /api/v1/checklist-runs/{id}/complete | inspector |
+| GET | /api/v1/webhooks/events | supervisor |
+| GET, POST, PATCH | /api/v1/webhooks | supervisor |
+| GET | /api/v1/webhook-deliveries | supervisor |
+| GET | /api/v1/notifications | supervisor |
+| POST | /api/v1/notifications/email | supervisor |
+| POST | /api/v1/admin/seed-demo | admin |
 
-`GET /healthz` is process health. `GET /readyz` pings PostgreSQL. `GET /api/v1/version` returns the build version.
+`GET /healthz` is process health. `GET /readyz` pings PostgreSQL. `GET /api/v1/version` returns the build version. `GET /metrics` is Prometheus text. `GET /api/v1/openapi.yaml` (and `/api/v1/openapi.json`) is the OpenAPI 3 document for all routes.
 
 Useful filters: `q` on names and codes, `active=true|false`, `status`, `product_id`, `site_id`, `lot_id`, `from`, `to` as RFC3339. Measurements need `product_id`, `characteristic_code`, or `from`, and allow `limit` up to 2000.
 
@@ -202,9 +227,24 @@ Attachments accept JPEG, PNG, WebP, PDF, and plain text, up to 25 MB. Files are 
 
 A gauge past its calibration date can still be used. The result comes back with `calibration_warning: true`.
 
+## Additive analytics and exports
+
+These routes are new. Existing dashboard, audit, attachment, and CRUD shapes are unchanged.
+
+- **Stats.** `GET /api/v1/stats/defect-rates?group_by=product|site|inspector` returns fail and defect rates (optional `from`, `to`, `product_id`, `site_id`, `inspector_id`). `GET /api/v1/stats/ncr-aging` and `/api/v1/stats/capa-aging` return age buckets plus the oldest open items. `GET /api/v1/stats/trends` returns a daily series of inspections, NCRs, and defects.
+- **Search.** `GET /api/v1/search?q=` finds lots, inspections, NCRs, and CAPAs by number or text.
+- **Reports.** CSV and PDF downloads under `/api/v1/reports/…` accept the same `from`, `to`, `product_id`, `site_id`, and `status` filters where they apply. PDFs are simple text reports built without external libraries.
+- **Request audit.** Middleware records method, path, status, duration, and actor into `request_audit_log` (best-effort, never fails the request). Supervisors read it at `GET /api/v1/request-audit`. Mutation history remains on `GET /api/v1/audit`.
+- **Checklists.** Quality managers define reusable checklist templates. Inspectors start a run on an inspection, answer items, and complete the run.
+- **Webhooks and email outbox.** Supervisors register HTTPS endpoints for events such as `inspection.completed`, `ncr.created`, `checklist.completed`. Deliveries are stored and signed with `X-QC-Signature` when a secret is set. `POST /api/v1/notifications/email` queues mail for an external sender; this process only stores the outbox row.
+- **Metrics.** `GET /metrics` (Prometheus) and `GET /api/v1/metrics` (JSON) expose request counters and uptime.
+- **Demo seed.** `POST /api/v1/admin/seed-demo` inserts a coherent plant dataset (site, product, plan, lot, inspection, NCR, CAPA, checklist) without deleting existing rows.
+
+iOS clients: see `docs/ios-new-endpoints.md`.
+
 ## Schema changes
 
-Put the next change in `internal/db/migrations/002_something.sql`, rebuild, and restart. Files run once, in name order, inside a transaction. Do not edit a file that has already been applied.
+Put the next change in `internal/db/migrations/003_something.sql`, rebuild, and restart. Files run once, in name order, inside a transaction. Do not edit a file that has already been applied. Migration `002_qc_extensions.sql` adds request audit, checklists, webhooks, notification outbox, and demo seed tables only.
 
 ## Backup
 

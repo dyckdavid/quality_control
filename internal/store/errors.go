@@ -83,6 +83,12 @@ func conflictMessage(constraint string) string {
 		return "That defect code is already in use."
 	case "lots_number_idx":
 		return "That lot number is already in use."
+	case "checklists_code_idx":
+		return "That checklist code is already in use."
+	case "checklist_items_sequence_idx":
+		return "That sequence number is already on this checklist."
+	case "checklist_runs_checklist_id_inspection_id_key":
+		return "That checklist is already started on this inspection."
 	default:
 		return "A record with this identifier already exists."
 	}
