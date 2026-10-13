@@ -44,16 +44,41 @@ jobs:
       - name: Build installer
         working-directory: desktop/packaging/windows
         shell: pwsh
+        env:
+          CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           $version = (Select-String -Path ..\..\Cargo.toml -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
-          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\dist" | Out-Null
-          Copy-Item ..\..\target\release\qc-desktop.exe "$env:GITHUB_WORKSPACE\dist\QualityControl-$version-windows-portable.exe"
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" "/DOutputDir=$env:GITHUB_WORKSPACE\dist" installer.iss
+          $dist = "$env:GITHUB_WORKSPACE\dist"
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $exe = "..\..\target\release\qc-desktop.exe"
+          $iscc = @("/DAppVersion=$version", "/DOutputDir=$dist")
+
+          if ($env:CERT_PFX) {
+            $pfx = "$env:RUNNER_TEMP\signing.pfx"
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_PFX))
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName | Select-Object -Last 1 -ExpandProperty FullName
+            $signArgs = "sign /f `"$pfx`" /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256"
+            & $signtool sign /f $pfx /p $env:CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $exe
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $iscc += "/DSign"
+            $iscc += ('/Sqcsign=$q' + $signtool + '$q ' + $signArgs.Replace('"', '$q') + ' $q$f$q')
+          } else {
+            Write-Host "::warning::WINDOWS_CERT_PFX is not set, so the Windows files are unsigned."
+          }
+
+          Copy-Item $exe "$dist\QualityControl-$version-windows-portable.exe"
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" @iscc installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item QualityControl-signing.cer, trust-certificate.cmd $dist
+          if ($pfx) { Remove-Item $pfx }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: dist/*.exe
+          path: |
+            dist/*.exe
+            dist/*.cer
+            dist/*.cmd
           if-no-files-found: error
 
   release:

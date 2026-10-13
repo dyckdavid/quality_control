@@ -1,5 +1,6 @@
 ; Inno Setup script for the Quality Control desktop app.
 ; Build: iscc /DAppVersion=0.1.0 /DSourceExe=..\..\target\release\qc-desktop.exe /DOutputDir=..\..\target\dist installer.iss
+; To sign the setup and uninstaller, also pass /DSign "/Sqcsign=<signtool command ending in $f>".
 
 #ifndef AppVersion
   #define AppVersion "0.1.0"
@@ -30,6 +31,10 @@ UninstallDisplayIcon={app}\QualityControl.exe
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+#ifdef Sign
+SignTool=qcsign
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

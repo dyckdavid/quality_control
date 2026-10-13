@@ -66,6 +66,7 @@ Binary: `target/release/qc-desktop`
 
 - **macOS DMG** (universal, Apple Silicon and Intel): `desktop/packaging/macos/build-dmg.sh` writes `target/dist/QualityControl-<version>-macos.dmg`. Set `QC_SIGN_IDENTITY` to a Developer ID identity to sign for distribution; without it the app is ad-hoc signed, so other Macs need right-click, Open the first time.
 - **Windows installer**: `desktop/packaging/windows/installer.iss` (Inno Setup 6) wraps `target/release/qc-desktop.exe` into `QualityControl-<version>-windows-setup.exe`. It installs per user, so no admin rights are needed.
+- **Windows signing**: the workflow signs the app, setup, and uninstaller with the shop's own certificate when the `WINDOWS_CERT_PFX` (base64 .pfx) and `WINDOWS_CERT_PASSWORD` secrets are set. Run `packaging/windows/trust-certificate.cmd` as administrator once on each shop PC, next to `QualityControl-signing.cer`, so Windows trusts that signature. The private key is kept outside the repo.
 - **GitHub Actions**: `.github/workflows/release.yml` builds both. Run it from the Actions tab to get them as build artifacts, or push a `v*` tag to publish them on a GitHub release.
 - The app icon lives in `assets/icon.png` and `assets/icon.ico`; `cargo run --example make_icon` redraws both.
 
